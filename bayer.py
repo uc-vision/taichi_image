@@ -10,7 +10,7 @@ from util import flatten, symmetrical, zip_tuple, u8vec3
 
 
 
-ti.init(arch=ti.cuda, debug=True)
+ti.init(arch=ti.cuda, debug=False)
 
 bayer_filter_upper = [
   # G at R,B locations
@@ -136,8 +136,9 @@ def debayer(bayer: ti.types.ndarray(ti.u8, ndim=2),
     x, y = i * 2, j * 2
 
     out[x, y] = filter_at(bayer, bayer_kernels[0], ivec2(x, y), divisor) 
-    out[x + 1, y] = filter_at(bayer, bayer_kernels[1], ivec2(x + 1, y), divisor) 
-    out[x, y + 1] = filter_at(bayer, bayer_kernels[2], ivec2(x, y + 1), divisor) 
+    out[x + 1, y] = filter_at(bayer, bayer_kernels[2], ivec2(x + 1, y), divisor) 
+    
+    out[x, y + 1] = filter_at(bayer, bayer_kernels[1], ivec2(x, y + 1), divisor) 
     out[x + 1, y + 1] = filter_at(bayer, bayer_kernels[3], ivec2(x + 1, y + 1), divisor) 
     
 
@@ -155,15 +156,13 @@ def main():
   rgb_to_bayer(test_image, bayer, bayer_pattern["rggb"])
 
   out = np.zeros_like(test_image)
-
   debayer(bayer, out, 16.0)
 
-  # kernel = kernel_square(flatten(uniform), n=3)
-
-  # conv(test_image, kernel, out)
 
 
+  cv2.imshow("bayer", cv2.cvtColor(bayer, cv2.COLOR_BAYER_BG2BGR))
   cv2.imshow("out", cv2.cvtColor(out, cv2.COLOR_RGB2BGR))
+
   cv2.waitKey(0)
 
 
