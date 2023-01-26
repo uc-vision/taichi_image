@@ -72,8 +72,6 @@ def diamond_kernel(weights):
 
 
 
-
-
 def make_bayer_kernels():
 
   g_rb, r_g1, r_g2, rb_br, ident = [
@@ -157,7 +155,6 @@ def main():
 
   out = np.zeros_like(test_image)
   debayer(bayer, out, 16.0)
-
 
 
   cv2.imshow("bayer", cv2.cvtColor(bayer, cv2.COLOR_BAYER_BG2BGR))
