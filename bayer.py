@@ -1,25 +1,57 @@
 import taichi as ti
+from taichi.math import ivec2, vec3
+
 import numpy as np
 import argparse
 
 import cv2
 
+from util import flatten, symmetrical, zip_tuple, u8vec3
+
+
 
 ti.init(arch=ti.cuda, debug=True)
 
-cross = [
-          (-1,),
-       (0,  2),
-  (-1,  2,  4),
+bayer_filter_upper = [
+  # G at R,B locations
+  [
+            (-2,),
+         (0,  4),
+    (-2,  4,  8),
+  ],
+
+  #  R  G1
+  #  G2 B
+
+  # R at G1 and B at G2
+  [
+            (1,),
+       (-2,  0),
+    (-2,  8, 10)
+  ],
+
+
+  # B at G1 and R at G2
+  [
+           (-2,),  
+       ( -2, 8),
+    ( 1,  0, 10) 
+  ],
+
+  # R at B and B at R
+  [
+          (-3,),
+        (4, 0),
+    (-3, 0, 12)
+  ],
+
+  # Identity 
+  [
+          (0,),
+        (0, 0),
+    (0, 0, 16)
   ]
-
-uniform = [
-  (1,  1,  1),
-  (1,  -8,  1),
-  (1,  1,  1),
-  ]
-
-
+]
 
 diamond = [ 
     (0, 1),
@@ -28,18 +60,6 @@ diamond = [
     (-1, 2),
     (0, 1),
 ]
-
-
-def mirror(w):
-  return w + w[:-1][::-1]
-
-
-def symmetrical(w):
-  w = mirror([mirror(row) for row in w])
-  return flatten(w)
-
-def flatten(w):
-  return [x for row in w for x in row]
 
 def diamond_kernel(weights):
 
@@ -50,33 +70,76 @@ def diamond_kernel(weights):
   assert len(offsets) == len(weights), f"incorrect weight length {len(offsets)} != {len(weights)}"
   return tuple(zip(offsets, weights))
 
-def kernel_square(weights, n=5):
-
-  offsets = [ (i, j) for i in range(-(n//2), n//2 + 1) 
-    for j in range(-(n//2), n//2 + 1)]
-
-  assert len(offsets) == len(weights), f"incorrect weight length {len(offsets)} != {len(weights)}"
-  return tuple(zip(offsets, weights))
 
 
 
-u8vec3 = ti.types.vector(3, ti.u8)
+
+def make_bayer_kernels():
+
+  g_rb, r_g1, r_g2, rb_br, ident = [
+    symmetrical(w) for w in bayer_filter_upper
+  ]
+
+  b_g1 = r_g2
+  b_g2 = r_g1
+
+  vec_weights = [ 
+    zip_tuple(ident, g_rb, rb_br),  # R
+    zip_tuple(r_g1, ident, b_g1),     # G1
+    zip_tuple(r_g2, ident, b_g2),     # G2
+    zip_tuple(rb_br, g_rb, ident),  # B
+  ]
+
+  print(len(vec_weights[0]))
+
+  return [diamond_kernel(w) for w in vec_weights]
+
+bayer_kernels = make_bayer_kernels()
+
+bayer_pattern = dict(
+  rggb = (0, 1, 1, 2)
+)
 
 @ti.kernel
-def norm_convolve(image: ti.types.ndarray(u8vec3, ndim=2), weights: ti.template(), 
-  out: ti.types.ndarray(u8vec3, ndim=2)):
-  total = ti.static(sum([w for _, w in weights]))
+def rgb_to_bayer(image: ti.types.ndarray(u8vec3, ndim=2),
+  bayer: ti.types.ndarray(ti.u8, ndim=2), pattern: ti.template()):
+  
+  p1, p2, p3, p4 = pattern
+  for i, j in ti.ndrange(image.shape[0] // 2, image.shape[1] // 2):
+    x, y = i * 2, j * 2
 
-  image_size = ti.math.ivec2(image.shape)
-  for i in ti.grouped(image):
-    c = ti.math.vec3(0.0)
-    for offset, weight in ti.static(weights):
-      idx = ti.math.clamp(i + offset, 0, image_size - 1)
+    bayer[x, y] = image[x, y][p1]
+    bayer[x + 1, y] = image[x + 1, y][p2]
+    bayer[x, y + 1] = image[x + 1, y + 1][p3]
+    bayer[x + 1, y + 1] = image[x + 1, y + 1][p4]
 
-      c += ti.cast(image[idx], ti.f32) * weight
-    out[i] = ti.cast(ti.math.clamp(c / total, 0, 255), ti.u8)
+
+@ti.func 
+def filter_at(image: ti.template(), 
+  weights: ti.template(), i:ivec2, divisor: ti.f32):
+  
+  image_size = ivec2(image.shape)
+  c = vec3(0.0)
+
+  for offset, weight in ti.static(weights):
+    idx = ti.math.clamp(i + offset, 0, image_size - 1)
+    c += ti.cast(image[idx], ti.f32) * vec3(weight)
+  
+  return ti.cast(ti.math.clamp(c / divisor, 0, 255), ti.u8)
+
+
+@ti.kernel
+def debayer(bayer: ti.types.ndarray(ti.u8, ndim=2), 
+  out: ti.types.ndarray(u8vec3, ndim=2), divisor: ti.f32):
+
+  for i, j in ti.ndrange(bayer.shape[0] // 2, bayer.shape[1] // 2):
+    x, y = i * 2, j * 2
+
+    out[x, y] = filter_at(bayer, bayer_kernels[0], ivec2(x, y), divisor) 
+    out[x + 1, y] = filter_at(bayer, bayer_kernels[1], ivec2(x + 1, y), divisor) 
+    out[x, y + 1] = filter_at(bayer, bayer_kernels[2], ivec2(x, y + 1), divisor) 
+    out[x + 1, y + 1] = filter_at(bayer, bayer_kernels[3], ivec2(x + 1, y + 1), divisor) 
     
-
 
 def main():
 
@@ -86,16 +149,21 @@ def main():
   args = parser.parse_args()
 
   test_image = cv2.imread(args.image)
+  test_image = cv2.cvtColor(test_image, cv2.COLOR_BGR2RGB)
+
+  bayer = np.zeros((test_image.shape[:2]), dtype=np.uint8)
+  rgb_to_bayer(test_image, bayer, bayer_pattern["rggb"])
+
   out = np.zeros_like(test_image)
 
-  kernel = diamond_kernel(symmetrical(cross))
+  debayer(bayer, out, 16.0)
 
   # kernel = kernel_square(flatten(uniform), n=3)
 
-  norm_convolve(test_image, kernel, out)
+  # conv(test_image, kernel, out)
 
 
-  cv2.imshow("out", out)
+  cv2.imshow("out", cv2.cvtColor(out, cv2.COLOR_RGB2BGR))
   cv2.waitKey(0)
 
 
