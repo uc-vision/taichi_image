@@ -32,8 +32,8 @@ def make_bayer_kernels():
       symmetrical(w) for w in [
 
           [(-2,), (0, 4), (-2, 4, 8)],  # G at R,B locations
-          [(1,), (-2, 0), (-2, 8, 10)], # R at G1 and B at G2
-          [(-2,), (-2, 8), (1, 0, 10)], # B at G1 and R at G2
+          [(-2,), (-2, 8), (1, 0, 10)], # R at G1 and B at G2
+          [(1,), (-2, 0), (-2, 8, 10)], # B at G1 and R at G2
           [(-3,), (4, 0), (-3, 0, 12)], # R at B and B at R
           [(0,), (0, 0), (0, 0, 16)] # Identity (R at R, G at G etc.)
       ]
@@ -49,7 +49,7 @@ def make_bayer_kernels():
       zip_tuple(rb_br, g_rb, ident),  # B
   ]
 
-  return [diamond_kernel(w) for w in vec_weights]
+  return tuple([diamond_kernel(w) for w in vec_weights])
 
 
 bayer_kernels = make_bayer_kernels()
@@ -116,11 +116,11 @@ def bayer_to_rgb_kernel(bayer: ti.types.ndarray(ti.u8, ndim=2),
   for i, j in ti.ndrange(bayer.shape[0] // 2, bayer.shape[1] // 2):
     x, y = i * 2, j * 2
 
-    out[x, y] = filter_at(bayer, kernels, ivec2(x, y), divisor)
-    out[x + 1, y] = filter_at(bayer, kernels, ivec2(x + 1, y), divisor)
+    out[x, y] = filter_at(bayer, kernels[0], ivec2(x, y), divisor)
+    out[x + 1, y] = filter_at(bayer, kernels[1], ivec2(x + 1, y), divisor)
 
-    out[x, y + 1] = filter_at(bayer, kernels, ivec2(x, y + 1), divisor)
-    out[x + 1, y + 1] = filter_at(bayer, kernels, ivec2(x + 1, y + 1),
+    out[x, y + 1] = filter_at(bayer, kernels[2], ivec2(x, y + 1), divisor)
+    out[x + 1, y + 1] = filter_at(bayer, kernels[3], ivec2(x + 1, y + 1),
                                   divisor)
 
 
@@ -138,9 +138,10 @@ def bayer_to_rgb(bayer, pattern:BayerPattern):
 
   kernel_patterns = {
       BayerPattern.RGGB: [0, 1, 2, 3],
-      BayerPattern.GRBG: [3, 0, 1, 2],
+      BayerPattern.GRBG: [1, 0, 3, 2],
+
       BayerPattern.GBRG: [2, 3, 0, 1],
-      BayerPattern.BGGR: [1, 2, 3, 0],
+      BayerPattern.BGGR: [3, 2, 1, 0],
   }
   
 
