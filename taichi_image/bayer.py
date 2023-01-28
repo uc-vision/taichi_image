@@ -4,9 +4,8 @@ from taichi.math import ivec2, vec3
 
 import numpy as np
 
-from taichi_image.kernel import flatten, symmetrical, zip_tuple, u8vec3
+from taichi_image.kernel import symmetrical, zip_tuple, u8vec3
 
-ti.init(arch=ti.cuda, debug=False)
 
 
 def diamond_kernel(weights):
@@ -21,8 +20,11 @@ def diamond_kernel(weights):
 
   assert len(offsets) == len(
       weights), f"incorrect weight length {len(offsets)} != {len(weights)}"
-  return tuple(zip(offsets, weights))
+  return filter_kernel(tuple(zip(offsets, weights)))
 
+
+def filter_kernel(kernel):
+  return tuple((i, w) for i, w in kernel if w != 0)
 
 def make_bayer_kernels():
   #  R  G1
@@ -52,7 +54,7 @@ def make_bayer_kernels():
   return tuple([diamond_kernel(w) for w in vec_weights])
 
 
-bayer_kernels = make_bayer_kernels()
+bayer_kernels_5x5 = make_bayer_kernels()
 
 
 
@@ -89,13 +91,24 @@ def rgb_to_bayer_kernel(image: ti.types.ndarray(u8vec3, ndim=2),
     bayer[x, y + 1] = image[x + 1, y + 1][p3]
     bayer[x + 1, y + 1] = image[x + 1, y + 1][p4]
 
+def scale_factor(dtype):
+  if dtype == ti.u8:
+    return 255
+  elif dtype == ti.u16:
+    return 65535
+  elif dtype == ti.f32:
+    return 1.0
+  else:
+    raise ValueError(f"unsupported dtype {dtype}")
 
 
-
+# @ti.func
+# def read_pixel(image:ti.template(), i:ivec2):
+#   return ti.cast(image[i], ti.f32) / ti.static(scale_factor(image.dtype))
 
 @ti.func
 def filter_at(
-    image: ti.template(), weights: ti.template(), i: ivec2, divisor: ti.f32):
+    image: ti.template(), weights: ti.template(), i: ivec2):
 
   image_size = ivec2(image.shape)
   c = vec3(0.0)
@@ -104,24 +117,46 @@ def filter_at(
     idx = ti.math.clamp(i + offset, 0, image_size - 1)
     c += ti.cast(image[idx], ti.f32) * vec3(weight)
 
-  return ti.cast(ti.math.clamp(c / divisor, 0, 255), ti.u8)
+  return ti.cast(ti.math.clamp(c / 16, 0, 255), ti.u8)
+
+@ti.func
+def debayer_at(bayer:ti.template(), i:ivec2,
+     kernels:ti.template()) -> u8vec3:
+  offset = i % 2 
+  idx = offset.x + offset.y * 2
+
+
+  c = u8vec3(0)
+  if idx == 0:
+    c =  filter_at(bayer, kernels[0], i)
+  elif idx == 1:
+    c =  filter_at(bayer, kernels[1], i)
+  elif idx == 2:
+    c =  filter_at(bayer, kernels[2], i)
+  elif idx == 3:
+    c =  filter_at(bayer, kernels[3], i)
+  
+  return c
+
+
+
+@ti.func
+def bayer_2x2(bayer: ti.template(), out: ti.template(), kernels: ti.template(),
+              i: ti.i32, j: ti.i32):
+
+    out[i, j] = filter_at(bayer, kernels[0], ivec2(i, j))
+    out[i + 1, j] = filter_at(bayer, kernels[1], ivec2(i + 1, j))
+
+    out[i, j + 1] = filter_at(bayer, kernels[2], ivec2(i, j + 1))
+    out[i + 1, j + 1] = filter_at(bayer, kernels[3], ivec2(i + 1, j + 1))
 
 
 @ti.kernel
 def bayer_to_rgb_kernel(bayer: ti.types.ndarray(ti.u8, ndim=2),
             out: ti.types.ndarray(u8vec3, ndim=2), kernels: ti.template()):
 
-  divisor = 16.0
-
   for i, j in ti.ndrange(bayer.shape[0] // 2, bayer.shape[1] // 2):
-    x, y = i * 2, j * 2
-
-    out[x, y] = filter_at(bayer, kernels[0], ivec2(x, y), divisor)
-    out[x + 1, y] = filter_at(bayer, kernels[1], ivec2(x + 1, y), divisor)
-
-    out[x, y + 1] = filter_at(bayer, kernels[2], ivec2(x, y + 1), divisor)
-    out[x + 1, y + 1] = filter_at(bayer, kernels[3], ivec2(x + 1, y + 1),
-                                  divisor)
+    bayer_2x2(bayer, out, kernels, i * 2, j * 2)
 
 
 
@@ -133,18 +168,21 @@ def rgb_to_bayer(image, pattern:BayerPattern):
   return bayer
 
 
+
+kernel_patterns = {
+    BayerPattern.RGGB: [0, 1, 2, 3],
+    BayerPattern.GRBG: [1, 0, 3, 2],
+    BayerPattern.GBRG: [2, 3, 0, 1],
+    BayerPattern.BGGR: [3, 2, 1, 0],
+}
+  
+def bayer_kernels(pattern:BayerPattern):
+  return tuple([bayer_kernels_5x5[p] for p in kernel_patterns[pattern]])
+
 def bayer_to_rgb(bayer, pattern:BayerPattern):
   assert bayer.ndim == 2 , "image must be mono bayer"
 
-  kernel_patterns = {
-      BayerPattern.RGGB: [0, 1, 2, 3],
-      BayerPattern.GRBG: [1, 0, 3, 2],
-
-      BayerPattern.GBRG: [2, 3, 0, 1],
-      BayerPattern.BGGR: [3, 2, 1, 0],
-  }
-  
 
   rgb = np.empty((*bayer.shape, 3), dtype=np.uint8)
-  bayer_to_rgb_kernel(bayer, rgb, tuple([bayer_kernels[i] for i in kernel_patterns[pattern] ]))
+  bayer_to_rgb_kernel(bayer, rgb, bayer_kernels(pattern))
   return rgb

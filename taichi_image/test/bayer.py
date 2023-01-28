@@ -5,6 +5,8 @@ from taichi_image import BayerPattern, rgb_to_bayer, bayer_to_rgb
 
 import cv2
 
+from taichi_image.test.arguments import init_with_args
+
 
 def psnr(img1, img2):
   mse = np.mean((img1 - img2) ** 2)
@@ -46,26 +48,11 @@ def test_bayer_to_rgb(rgb_image):
 
 
 def main():
-
-  parser = argparse.ArgumentParser()
-  parser.add_argument("image", type=str)
-
-  args = parser.parse_args()
+  args = init_with_args()
 
   test_image = cv2.imread(args.image)
   test_bayer_to_rgb(cv2.cvtColor(test_image, cv2.COLOR_BGR2RGB))
-  # test_image = cv2.cvtColor(test_image, cv2.COLOR_BGR2RGB)
 
-  # bayer = np.zeros((test_image.shape[:2]), dtype=np.uint8)
-  # rgb_to_bayer(test_image, bayer, BayerPattern.RGGB)
-
-  # out = np.zeros_like(test_image)
-  # bayer_to_rgb(bayer, out, 16.0)
-
-  # cv2.imshow("bayer", cv2.cvtColor(bayer, cv2.COLOR_BAYER_BG2BGR))
-  # cv2.imshow("out", cv2.cvtColor(out, cv2.COLOR_RGB2BGR))
-
-  # cv2.waitKey(0)
 
 
 if __name__ == "__main__":

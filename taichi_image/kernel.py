@@ -28,6 +28,9 @@ def zip_tuple(*args):
 
 
 u8vec3 = ti.types.vector(3, ti.u8)
+u16vec3 = ti.types.vector(3, ti.u16)
+f16vec3 = ti.types.vector(3, ti.f16)
+
 
 @ti.kernel
 def conv(image: ti.types.ndarray(u8vec3, ndim=2), weights: ti.template(), 
