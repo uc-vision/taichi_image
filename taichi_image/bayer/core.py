@@ -77,35 +77,6 @@ pixel_orders = {
     
 
 
-@ti.kernel
-def rgb_to_bayer_kernel(image: ti.types.ndarray(u8vec3, ndim=2),
-                 bayer: ti.types.ndarray(ti.u8,
-                                         ndim=2), pixel_order: ti.template()):
-
-  p1, p2, p3, p4 = pixel_order
-  for i, j in ti.ndrange(image.shape[0] // 2, image.shape[1] // 2):
-    x, y = i * 2, j * 2
-
-    bayer[x, y] = image[x, y][p1]
-    bayer[x + 1, y] = image[x + 1, y][p2]
-    bayer[x, y + 1] = image[x + 1, y + 1][p3]
-    bayer[x + 1, y + 1] = image[x + 1, y + 1][p4]
-
-def scale_factor(dtype):
-  if dtype == ti.u8:
-    return 255
-  elif dtype == ti.u16:
-    return 65535
-  elif dtype == ti.f32:
-    return 1.0
-  else:
-    raise ValueError(f"unsupported dtype {dtype}")
-
-
-# @ti.func
-# def read_pixel(image:ti.template(), i:ivec2):
-#   return ti.cast(image[i], ti.f32) / ti.static(scale_factor(image.dtype))
-
 @ti.func
 def filter_at(
     image: ti.template(), weights: ti.template(), i: ivec2):
@@ -118,26 +89,6 @@ def filter_at(
     c += ti.cast(image[idx], ti.f32) * vec3(weight)
 
   return ti.cast(ti.math.clamp(c / 16, 0, 255), ti.u8)
-
-@ti.func
-def debayer_at(bayer:ti.template(), i:ivec2,
-     kernels:ti.template()) -> u8vec3:
-  offset = i % 2 
-  idx = offset.x + offset.y * 2
-
-
-  c = u8vec3(0)
-  if idx == 0:
-    c =  filter_at(bayer, kernels[0], i)
-  elif idx == 1:
-    c =  filter_at(bayer, kernels[1], i)
-  elif idx == 2:
-    c =  filter_at(bayer, kernels[2], i)
-  elif idx == 3:
-    c =  filter_at(bayer, kernels[3], i)
-  
-  return c
-
 
 
 @ti.func
