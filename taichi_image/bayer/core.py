@@ -57,7 +57,6 @@ def make_bayer_kernels():
 bayer_kernels_5x5 = make_bayer_kernels()
 
 
-
 class BayerPattern(enum.Enum):
   RGGB = 0
   GRBG = 1
@@ -68,13 +67,25 @@ class BayerPattern(enum.Enum):
   def pixel_order(self):
     return pixel_orders[self.value]
 
+# Pixel order for each type of bayer pattern (R=0, G=1, B=2)
 pixel_orders = {
     BayerPattern.RGGB.value : (0, 1, 1, 2),
     BayerPattern.GRBG.value : (1, 0, 2, 1),
     BayerPattern.GBRG.value : (1, 2, 0, 1),
     BayerPattern.BGGR.value : (2, 1, 1, 0)
 }
-    
+
+# Permutation to kernels used for each type of payer pattern
+kernel_patterns = {
+    BayerPattern.RGGB: [0, 1, 2, 3],
+    BayerPattern.GRBG: [1, 0, 3, 2],
+    BayerPattern.GBRG: [2, 3, 0, 1],
+    BayerPattern.BGGR: [3, 2, 1, 0],
+}
+  
+def bayer_kernels(pattern:BayerPattern):
+  return tuple([bayer_kernels_5x5[p] for p in kernel_patterns[pattern]])
+
 
 
 @ti.func
@@ -103,37 +114,11 @@ def bayer_2x2(bayer: ti.template(), out: ti.template(), kernels: ti.template(),
 
 
 @ti.kernel
-def bayer_to_rgb_kernel(bayer: ti.types.ndarray(ti.u8, ndim=2),
-            out: ti.types.ndarray(u8vec3, ndim=2), kernels: ti.template()):
+def bayer_to_rgb_array(bayer: ti.types.ndarray(ndim=2),
+            out: ti.types.ndarray(u8vec3, ndim=2), in_type:ti.template(), out_type, kernels: ti.template()):
 
   for i, j in ti.ndrange(bayer.shape[0] // 2, bayer.shape[1] // 2):
     bayer_2x2(bayer, out, kernels, i * 2, j * 2)
 
 
 
-def rgb_to_bayer(image, pattern:BayerPattern):
-  assert image.ndim == 3 and image.shape[2] == 3, "image must be RGB"
-
-  bayer = np.empty(image.shape[:2], dtype=np.uint8)
-  rgb_to_bayer_kernel(image, bayer, pattern.pixel_order)
-  return bayer
-
-
-
-kernel_patterns = {
-    BayerPattern.RGGB: [0, 1, 2, 3],
-    BayerPattern.GRBG: [1, 0, 3, 2],
-    BayerPattern.GBRG: [2, 3, 0, 1],
-    BayerPattern.BGGR: [3, 2, 1, 0],
-}
-  
-def bayer_kernels(pattern:BayerPattern):
-  return tuple([bayer_kernels_5x5[p] for p in kernel_patterns[pattern]])
-
-def bayer_to_rgb(bayer, pattern:BayerPattern):
-  assert bayer.ndim == 2 , "image must be mono bayer"
-
-
-  rgb = np.empty((*bayer.shape, 3), dtype=np.uint8)
-  bayer_to_rgb_kernel(bayer, rgb, bayer_kernels(pattern))
-  return rgb

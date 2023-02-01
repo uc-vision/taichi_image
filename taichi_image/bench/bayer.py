@@ -13,6 +13,7 @@ import tqdm as tqdm
 from taichi_image.bayer import bayer_kernels, bayer_to_rgb_kernel
 from taichi_image.test.arguments import init_with_args
 
+from taichi_image.bench import benchmark
 
 
 def main():
@@ -34,19 +35,12 @@ def main():
   out_rgb = torch.zeros( (*bayer.shape, 3), dtype=torch.uint8, device=device)
   kernels = bayer_kernels(BayerPattern.RGGB)
 
+  benchmark("bayer_to_rgb_kernel", bayer_to_rgb_kernel, [bayer, out_rgb, kernels], iterations=10000, warmup=1000)
 
-  for i in tqdm.trange(1000):
-    rgb = bayer_to_rgb_kernel(bayer, out_rgb, kernels)
+  # with Benchmark("bayer_to_rgb_kernel", 10000) as b:
+  #   for i in tqdm.trange(b.iterations):
+  #     rgb = bayer_to_rgb_kernel(bayer, out_rgb, kernels)
 
-  torch.cuda.synchronize()
-  start = time.time()
   
-  for i in tqdm.trange(10000):
-    rgb = bayer_to_rgb_kernel(bayer, out_rgb, kernels)
-
-  torch.cuda.synchronize()
-  elapsed = time.time() - start
-  print(f"elapsed: {elapsed:.4f} s, {10000 / elapsed:.2f} it/s")
-
 if __name__ == "__main__":
   main()
