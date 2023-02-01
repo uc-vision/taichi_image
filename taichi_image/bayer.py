@@ -5,6 +5,8 @@ from taichi.math import ivec2, vec3
 import numpy as np
 
 from taichi_image.kernel import flatten, symmetrical, zip_tuple, u8vec3
+from . import types
+
 
 ti.init(arch=ti.cuda, debug=False)
 
@@ -73,36 +75,47 @@ pixel_orders = {
     BayerPattern.BGGR.value : (2, 1, 1, 0)
 }
 
-types = {
-  'u8': (ti.u8, 255, np.uint8),
-  'u16': (ti.u16, 65535, np.uint16),
-  'f16': (ti.f16, 1.0, np.float16),
-  'f32': (ti.f32, 1.0, np.float32)
+kernel_patterns = {
+    BayerPattern.RGGB: [0, 1, 2, 3],
+    BayerPattern.GRBG: [1, 0, 3, 2],
+
+    BayerPattern.GBRG: [2, 3, 0, 1],
+    BayerPattern.BGGR: [3, 2, 1, 0],
 }
+
+
+
+@ti.kernel
+def rgb_to_bayer_kernel(image: ti.types.ndarray(ndim=2),
+                bayer: ti.types.ndarray(ndim=2), pixel_order: ti.template()):
+
+  p1, p2, p3, p4 = pixel_order
+  for i, j in ti.ndrange(image.shape[0] // 2, image.shape[1] // 2):
+    x, y = i * 2, j * 2
+
+    bayer[x, y], image[x, y][p1]
+    bayer[x + 1, y] = image[x + 1, y][p2]
+    bayer[x, y + 1] = image[x + 1, y + 1][p3]
+    bayer[x + 1, y + 1] = image[x + 1, y + 1][p4]
     
 
-def kernels(pixel_type='u8'):
+def bayer_to_rgb_kernel(input_type='u8', output_type='u8'):
 
-  dtype, max_value, np_dtype = types[pixel_type]
-  img_vec3 = ti.types.vector(3, dtype)
+  in_dtype, in_scale = types.pixel_types[input_type]
+  out_dtype, out_scale = types.pixel_types[output_type]
+  
+  in_vec3 = ti.types.vector(3, in_dtype)
+  out_vec3 = ti.types.vector(3, out_dtype)
 
-  @ti.kernel
-  def rgb_to_bayer_kernel(image: ti.types.ndarray(img_vec3, ndim=2),
-                  bayer: ti.types.ndarray(dtype, ndim=2), pixel_order: ti.template()):
 
-    p1, p2, p3, p4 = pixel_order
-    for i, j in ti.ndrange(image.shape[0] // 2, image.shape[1] // 2):
-      x, y = i * 2, j * 2
-
-      bayer[x, y] = image[x, y][p1]
-      bayer[x + 1, y] = image[x + 1, y][p2]
-      bayer[x, y + 1] = image[x + 1, y + 1][p3]
-      bayer[x + 1, y + 1] = image[x + 1, y + 1][p4]
+  @ti.func
+  def write_pixel(image: ti.template(), i: ivec2, v: vec3):
+    image[i] = ti.cast(v * out_scale, out_dtype)
 
 
   @ti.func
   def filter_at(
-      image: ti.template(), weights: ti.template(), i: ivec2, divisor: ti.f32):
+      image: ti.template(), weights: ti.template(), i: ivec2) -> vec3:
 
     image_size = ivec2(image.shape)
     c = vec3(0.0)
@@ -111,54 +124,49 @@ def kernels(pixel_type='u8'):
       idx = ti.math.clamp(i + offset, 0, image_size - 1)
       c += ti.cast(image[idx], ti.f32) * vec3(weight)
 
-    return ti.cast(ti.math.clamp(c / divisor, 0, max_value), dtype)
+    return ti.math.clamp(c / in_scale, 0, 1.0)
 
 
   @ti.kernel
-  def bayer_to_rgb_kernel(bayer: ti.types.ndarray(dtype, ndim=2),
-              out: ti.types.ndarray(img_vec3, ndim=2), kernels: ti.template()):
+  def f(bayer: ti.types.ndarray(in_vec3, ndim=2),
+              out: ti.types.ndarray(out_vec3, ndim=2), kernels: ti.template()):
 
-    divisor = 16.0
     for i, j in ti.ndrange(bayer.shape[0] // 2, bayer.shape[1] // 2):
       x, y = i * 2, j * 2
 
-      out[x, y] = filter_at(bayer, kernels[0], ivec2(x, y), divisor)
-      out[x + 1, y] = filter_at(bayer, kernels[1], ivec2(x + 1, y), divisor)
+      write_pixel(out, ivec2(x, y), 
+        filter_at(bayer, kernels[0], ivec2(x, y)))
+        
+      write_pixel(out, ivec2(x + 1, y), 
+        filter_at(bayer, kernels[1], ivec2(x + 1, y)))
 
-      out[x, y + 1] = filter_at(bayer, kernels[2], ivec2(x, y + 1), divisor)
-      out[x + 1, y + 1] = filter_at(bayer, kernels[3], ivec2(x + 1, y + 1),
-                                    divisor)
-
-
-
-  def rgb_to_bayer(image, pattern:BayerPattern):
-    assert image.ndim == 3 and image.shape[2] == 3, "image must be RGB"
-
-    bayer = np.empty(image.shape[:2], dtype=np_dtype)
-    rgb_to_bayer_kernel(image, bayer, pattern.pixel_order)
-    return bayer
-
-
-  def bayer_to_rgb(bayer, pattern:BayerPattern):
-    assert bayer.ndim == 2 , "image must be mono bayer"
-
-    kernel_patterns = {
-        BayerPattern.RGGB: [0, 1, 2, 3],
-        BayerPattern.GRBG: [1, 0, 3, 2],
-
-        BayerPattern.GBRG: [2, 3, 0, 1],
-        BayerPattern.BGGR: [3, 2, 1, 0],
-    }
+      write_pixel(out, ivec2(x, y + 1), 
+        filter_at(bayer, kernels[2], ivec2(x, y + 1)))
     
-
-    rgb = np.empty((*bayer.shape, 3), dtype=np_dtype)
-    bayer_to_rgb_kernel(bayer, rgb, tuple([bayer_kernels[i] for i in kernel_patterns[pattern] ]))
-    return rgb
+      write_pixel(out, ivec2(x + 1, y + 1),
+        filter_at(bayer, kernels[3], ivec2(x + 1, y + 1)))
 
 
-  @ti.dataclass
-  class Bayer:
-    image: ti.types.ndarray(dtype, ndim=2)
+    return f
+
+
+def rgb_to_bayer(image, pattern:BayerPattern):
+  assert image.ndim == 3 and image.shape[2] == 3, "image must be RGB"
+
+  bayer = np.empty(image.shape[:2], dtype=np_dtype)
+  rgb_to_bayer_kernel(image, bayer, pattern.pixel_order)
+  return bayer
+
+
+def bayer_to_rgb(bayer, pattern:BayerPattern, dtype=):
+  assert bayer.ndim == 2 , "image must be mono bayer"
+
+
+  rgb = np.empty((*bayer.shape, 3), dtype=bayer.dtype)
+  bayer_to_rgb_kernel(bayer, rgb, tuple([bayer_kernels[i] for i in kernel_patterns[pattern] ]))
+  return rgb
+
+
 
     
 

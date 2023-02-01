@@ -35,11 +35,11 @@ def main():
   out_rgb = torch.zeros( (*bayer.shape, 3), dtype=torch.uint8, device=device)
   kernels = bayer_kernels(BayerPattern.RGGB)
 
-  benchmark("bayer_to_rgb_kernel", bayer_to_rgb_kernel, [bayer, out_rgb, kernels], iterations=10000, warmup=1000)
+  benchmark("bayer_to_rgb_kernel", 
+    bayer_to_rgb_kernel, [bayer, out_rgb, kernels], 
+    iterations=10000, warmup=1000)
 
-  # with Benchmark("bayer_to_rgb_kernel", 10000) as b:
-  #   for i in tqdm.trange(b.iterations):
-  #     rgb = bayer_to_rgb_kernel(bayer, out_rgb, kernels)
+
 
   
 if __name__ == "__main__":
