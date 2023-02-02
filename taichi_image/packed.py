@@ -51,6 +51,19 @@ def decode12_kernel(encoded:ti.types.ndarray(ti.u8, ndim=1), out:ti.types.ndarra
     pair = decode12_pair(bytes)
     out[i], out[i + 1] = pair[0], pair[1]
 
+
+@ti.kernel
+def decode12f_kernel(encoded:ti.types.ndarray(ti.u8, ndim=1), out:ti.types.ndarray(ti.f16, ndim=1)):
+  for i_half in ti.ndrange(out.shape[0] // 2):
+    i = i_half * 2
+    idx = 3 * i_half
+    bytes = ti.Vector([encoded[idx + k] for k in ti.static(range(3))], dt=ti.u8)
+    pair = decode12_pair(bytes)
+    out[i] = ti.cast(pair[0], ti.f32) / 4096
+    out[i + 1] = ti.cast(pair[0], ti.f32) / 4096
+
+
+
 def encode12(values:np.ndarray):
   assert values.dtype == np.uint16
 
@@ -63,13 +76,17 @@ def encode12(values:np.ndarray):
   return encoded
 
 
-def decode12(values:np.ndarray):
+def decode12(values:np.ndarray, dtype=np.uint16):
   assert values.dtype == np.uint8
   assert len(values) % 3 == 0, f"length must be a factor of 3 for 12-bit decoding got: {len(values)}"
 
-  decoded = np.empty(((values.shape[0] * 2) // 3), dtype=np.uint16)
+  assert dtype in [np.uint16, np.float16], f"unsupported dtype: {dtype}"
 
-  decode12_kernel(values, decoded)
+  decoded = np.empty(((values.shape[0] * 2) // 3), dtype=dtype)
+  if dtype == np.uint16:
+    decode12_kernel(values, decoded)
+  else:
+    decode12f_kernel(values, decoded)
   return decoded
 
 

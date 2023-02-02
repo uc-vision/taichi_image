@@ -31,7 +31,9 @@ def display_rgb(k, rgb_image):
 def test_rgb_to_bayer(rgb_image):
 
   bayer_images = make_bayer_images(rgb_image)
+  
   for k, bayer_image in bayer_images.items():
+    print(f"{k}: {bayer_image.shape} {bayer_image.dtype}")
 
     converted_rgb = cv2.cvtColor(bayer_image, cv2_to_rgb[k])
     print(f"{k} PSNR: {psnr(rgb_image, converted_rgb):.2f}")
@@ -41,6 +43,8 @@ def test_rgb_to_bayer(rgb_image):
 def test_bayer_to_rgb(rgb_image):
   bayer_images = make_bayer_images(rgb_image)
   for k, bayer_image in bayer_images.items():
+    print(f"{k}: {bayer_image.shape} {bayer_image.dtype}")
+
 
     converted_rgb = bayer_to_rgb(bayer_image, BayerPattern[k])
     print(f"{k} PSNR: {psnr(rgb_image, converted_rgb):.2f}")
@@ -54,6 +58,8 @@ def main():
 
   test_image = cv2.imread(args.image)
   test_image = cv2.cvtColor(test_image, cv2.COLOR_BGR2RGB)
+
+  test_image = test_image.astype(np.float32) / 255
   
   # test_rgb_to_bayer(test_image)
   test_bayer_to_rgb(test_image)
