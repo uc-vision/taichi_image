@@ -15,8 +15,8 @@ def psnr(img1, img2):
 
 cv2_to_rgb = dict(
   RGGB = cv2.COLOR_BAYER_BG2RGB,
-  GRBG = cv2.COLOR_BAYER_GR2RGB,
-  GBRG = cv2.COLOR_BAYER_GB2RGB,
+  GRBG = cv2.COLOR_BAYER_GB2RGB,
+  GBRG = cv2.COLOR_BAYER_GR2RGB,
   BGGR = cv2.COLOR_BAYER_RG2RGB,
 )
 
@@ -24,8 +24,8 @@ def make_bayer_images(rgb_image):
   return {pattern.name:rgb_to_bayer(rgb_image, pattern) for pattern in BayerPattern }
   
   
-def display_rgb(rgb_image):
-  cv2.imshow("RGB", cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR))
+def display_rgb(k, rgb_image):
+  cv2.imshow(k, cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR))
   cv2.waitKey(0)
 
 def test_rgb_to_bayer(rgb_image):
@@ -36,7 +36,7 @@ def test_rgb_to_bayer(rgb_image):
     converted_rgb = cv2.cvtColor(bayer_image, cv2_to_rgb[k])
     print(f"{k} PSNR: {psnr(rgb_image, converted_rgb):.2f}")
 
-    display_rgb(converted_rgb)
+    display_rgb(k, converted_rgb)
 
 def test_bayer_to_rgb(rgb_image):
   bayer_images = make_bayer_images(rgb_image)
@@ -45,7 +45,7 @@ def test_bayer_to_rgb(rgb_image):
     converted_rgb = bayer_to_rgb(bayer_image, BayerPattern[k])
     print(f"{k} PSNR: {psnr(rgb_image, converted_rgb):.2f}")
 
-    display_rgb(converted_rgb)
+    display_rgb(k, converted_rgb)
     
 
 
@@ -55,9 +55,8 @@ def main():
   test_image = cv2.imread(args.image)
   test_image = cv2.cvtColor(test_image, cv2.COLOR_BGR2RGB)
   
-  display_rgb(test_image)
-  test_rgb_to_bayer(test_image)
-  # test_bayer_to_rgb(test_image)
+  # test_rgb_to_bayer(test_image)
+  test_bayer_to_rgb(test_image)
 
 
 

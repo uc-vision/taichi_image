@@ -8,6 +8,8 @@ import numpy as np
 from taichi_image.kernel import flatten, symmetrical, zip_tuple, u8vec3
 from . import types
 
+from typeguard import typechecked
+
 
 
 def diamond_kernel(weights):
@@ -75,9 +77,8 @@ pixel_orders = {
 
 kernel_patterns = {
     BayerPattern.RGGB: (0, 1, 2, 3),
-    BayerPattern.GRBG: (1, 0, 3, 2),
-
-    BayerPattern.GBRG: (2, 3, 0, 1),
+    BayerPattern.GBRG: (1, 0, 3, 2),
+    BayerPattern.GRBG: (2, 3, 0, 1),
     BayerPattern.BGGR: (3, 2, 1, 0),
 }
 
@@ -87,18 +88,17 @@ kernel_patterns = {
 def rgb_to_bayer_kernel(image: ti.types.ndarray(ndim=3),
                 bayer: ti.types.ndarray(ndim=2), pixel_order: ti.template()):
 
-
   p1, p2, p3, p4 = pixel_order
   for i, j in ti.ndrange(bayer.shape[1] // 2, bayer.shape[0] // 2):
     x, y = i * 2, j * 2
 
-    bayer[y, x], image[y, x, p1]
+    bayer[y, x] = image[y, x, p1]
     bayer[y, x + 1] = image[y, x + 1, p2]
     bayer[y + 1, x] = image[y + 1, x, p3]
     bayer[y + 1, x + 1] = image[y + 1, x + 1, p4]
 
     
-
+@typechecked
 def bayer_to_rgb_kernel(pattern:BayerPattern, in_dtype=ti.u8, out_dtype=ti.u8):
 
   in_scale = types.pixel_types[in_dtype]
@@ -123,7 +123,7 @@ def bayer_to_rgb_kernel(pattern:BayerPattern, in_dtype=ti.u8, out_dtype=ti.u8):
       idx = ti.math.clamp(i + offset, 0, image_size - 1)
       c += ti.cast(image[idx], ti.f32) * vec3(weight)
 
-    return ti.math.clamp(c / in_scale, 0, 1.0)
+    return ti.math.clamp(c / (in_scale * 16.0), 0, 1.0)
 
 
   @ti.kernel
@@ -152,8 +152,7 @@ def bayer_to_rgb_kernel(pattern:BayerPattern, in_dtype=ti.u8, out_dtype=ti.u8):
 def rgb_to_bayer(image, pattern:BayerPattern):
   assert image.ndim == 3 and image.shape[2] == 3, "image must be RGB"
 
-  bayer = types.empty_array(image, image.shape[:2], dtype=image.dtype)
-  
+  bayer = types.zeros_array(image, image.shape[:2], dtype=image.dtype)
   rgb_to_bayer_kernel(image, bayer, pattern.pixel_order)
   return bayer
 
@@ -162,8 +161,9 @@ def rgb_to_bayer(image, pattern:BayerPattern):
 def bayer_to_rgb(bayer, pattern:BayerPattern, dtype=None):
   assert bayer.ndim == 2 , "image must be mono bayer"
 
+  
   rgb = types.empty_array(bayer, shape=bayer.shape + (3,), dtype=dtype)
-  f = bayer_to_rgb_kernel(types.ti_type(bayer), types.ti_type(rgb), pattern)
+  f = bayer_to_rgb_kernel(pattern, types.ti_type(bayer), types.ti_type(rgb))
 
   f(bayer, rgb)
   return rgb
