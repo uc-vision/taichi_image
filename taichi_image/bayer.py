@@ -1,14 +1,13 @@
 import enum
 import taichi as ti
 from taichi.math import ivec2, vec3
+import torch
 
 import numpy as np
 
 from taichi_image.kernel import flatten, symmetrical, zip_tuple, u8vec3
 from . import types
 
-
-ti.init(arch=ti.cuda, debug=False)
 
 
 def diamond_kernel(weights):
@@ -57,7 +56,6 @@ def make_bayer_kernels():
 bayer_kernels = make_bayer_kernels()
 
 
-
 class BayerPattern(enum.Enum):
   RGGB = 0
   GRBG = 1
@@ -66,47 +64,48 @@ class BayerPattern(enum.Enum):
 
   @property
   def pixel_order(self):
-    return pixel_orders[self.value]
+    return pixel_orders[self]
 
 pixel_orders = {
-    BayerPattern.RGGB.value : (0, 1, 1, 2),
-    BayerPattern.GRBG.value : (1, 0, 2, 1),
-    BayerPattern.GBRG.value : (1, 2, 0, 1),
-    BayerPattern.BGGR.value : (2, 1, 1, 0)
+    BayerPattern.RGGB : (0, 1, 1, 2),
+    BayerPattern.GRBG : (1, 0, 2, 1),
+    BayerPattern.GBRG : (1, 2, 0, 1),
+    BayerPattern.BGGR : (2, 1, 1, 0)
 }
 
 kernel_patterns = {
-    BayerPattern.RGGB: [0, 1, 2, 3],
-    BayerPattern.GRBG: [1, 0, 3, 2],
+    BayerPattern.RGGB: (0, 1, 2, 3),
+    BayerPattern.GRBG: (1, 0, 3, 2),
 
-    BayerPattern.GBRG: [2, 3, 0, 1],
-    BayerPattern.BGGR: [3, 2, 1, 0],
+    BayerPattern.GBRG: (2, 3, 0, 1),
+    BayerPattern.BGGR: (3, 2, 1, 0),
 }
 
 
 
 @ti.kernel
-def rgb_to_bayer_kernel(image: ti.types.ndarray(ndim=2),
+def rgb_to_bayer_kernel(image: ti.types.ndarray(ndim=3),
                 bayer: ti.types.ndarray(ndim=2), pixel_order: ti.template()):
 
+
   p1, p2, p3, p4 = pixel_order
-  for i, j in ti.ndrange(image.shape[0] // 2, image.shape[1] // 2):
+  for i, j in ti.ndrange(bayer.shape[1] // 2, bayer.shape[0] // 2):
     x, y = i * 2, j * 2
 
-    bayer[x, y], image[x, y][p1]
-    bayer[x + 1, y] = image[x + 1, y][p2]
-    bayer[x, y + 1] = image[x + 1, y + 1][p3]
-    bayer[x + 1, y + 1] = image[x + 1, y + 1][p4]
+    bayer[y, x], image[y, x, p1]
+    bayer[y, x + 1] = image[y, x + 1, p2]
+    bayer[y + 1, x] = image[y + 1, x, p3]
+    bayer[y + 1, x + 1] = image[y + 1, x + 1, p4]
+
     
 
-def bayer_to_rgb_kernel(input_type='u8', output_type='u8'):
+def bayer_to_rgb_kernel(pattern:BayerPattern, in_dtype=ti.u8, out_dtype=ti.u8):
 
-  in_dtype, in_scale = types.pixel_types[input_type]
-  out_dtype, out_scale = types.pixel_types[output_type]
+  in_scale = types.pixel_types[in_dtype]
+  out_scale = types.pixel_types[out_dtype]
   
-  in_vec3 = ti.types.vector(3, in_dtype)
   out_vec3 = ti.types.vector(3, out_dtype)
-
+  kernels =  tuple([bayer_kernels[i] for i in kernel_patterns[pattern] ])
 
   @ti.func
   def write_pixel(image: ti.template(), i: ivec2, v: vec3):
@@ -128,8 +127,8 @@ def bayer_to_rgb_kernel(input_type='u8', output_type='u8'):
 
 
   @ti.kernel
-  def f(bayer: ti.types.ndarray(in_vec3, ndim=2),
-              out: ti.types.ndarray(out_vec3, ndim=2), kernels: ti.template()):
+  def f(bayer: ti.types.ndarray(dtype=in_dtype, ndim=2),
+              out: ti.types.ndarray(dtype=out_vec3, ndim=2)):
 
     for i, j in ti.ndrange(bayer.shape[0] // 2, bayer.shape[1] // 2):
       x, y = i * 2, j * 2
@@ -147,23 +146,26 @@ def bayer_to_rgb_kernel(input_type='u8', output_type='u8'):
         filter_at(bayer, kernels[3], ivec2(x + 1, y + 1)))
 
 
-    return f
+  return f
 
 
 def rgb_to_bayer(image, pattern:BayerPattern):
   assert image.ndim == 3 and image.shape[2] == 3, "image must be RGB"
 
-  bayer = np.empty(image.shape[:2], dtype=np_dtype)
+  bayer = types.empty_array(image, image.shape[:2], dtype=image.dtype)
+  
   rgb_to_bayer_kernel(image, bayer, pattern.pixel_order)
   return bayer
 
 
-def bayer_to_rgb(bayer, pattern:BayerPattern, dtype=):
+  
+def bayer_to_rgb(bayer, pattern:BayerPattern, dtype=None):
   assert bayer.ndim == 2 , "image must be mono bayer"
 
+  rgb = types.empty_array(bayer, shape=bayer.shape + (3,), dtype=dtype)
+  f = bayer_to_rgb_kernel(types.ti_type(bayer), types.ti_type(rgb), pattern)
 
-  rgb = np.empty((*bayer.shape, 3), dtype=bayer.dtype)
-  bayer_to_rgb_kernel(bayer, rgb, tuple([bayer_kernels[i] for i in kernel_patterns[pattern] ]))
+  f(bayer, rgb)
   return rgb
 
 

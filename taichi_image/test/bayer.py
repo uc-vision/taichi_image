@@ -1,7 +1,7 @@
 import taichi as ti
 import numpy as np
 import argparse
-from taichi_image import BayerPattern, rgb_to_bayer, bayer_to_rgb
+from taichi_image.bayer import BayerPattern, rgb_to_bayer, bayer_to_rgb
 
 import cv2
 
@@ -24,6 +24,10 @@ def make_bayer_images(rgb_image):
   return {pattern.name:rgb_to_bayer(rgb_image, pattern) for pattern in BayerPattern }
   
   
+def display_rgb(rgb_image):
+  cv2.imshow("RGB", cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR))
+  cv2.waitKey(0)
+
 def test_rgb_to_bayer(rgb_image):
 
   bayer_images = make_bayer_images(rgb_image)
@@ -32,8 +36,7 @@ def test_rgb_to_bayer(rgb_image):
     converted_rgb = cv2.cvtColor(bayer_image, cv2_to_rgb[k])
     print(f"{k} PSNR: {psnr(rgb_image, converted_rgb):.2f}")
 
-    cv2.imshow(k, cv2.cvtColor(converted_rgb, cv2.COLOR_RGB2BGR))
-    cv2.waitKey(0)
+    display_rgb(converted_rgb)
 
 def test_bayer_to_rgb(rgb_image):
   bayer_images = make_bayer_images(rgb_image)
@@ -42,16 +45,19 @@ def test_bayer_to_rgb(rgb_image):
     converted_rgb = bayer_to_rgb(bayer_image, BayerPattern[k])
     print(f"{k} PSNR: {psnr(rgb_image, converted_rgb):.2f}")
 
-    cv2.imshow(k, cv2.cvtColor(converted_rgb, cv2.COLOR_RGB2BGR))
-    cv2.waitKey(0)
-
+    display_rgb(converted_rgb)
+    
 
 
 def main():
   args = init_with_args()
 
   test_image = cv2.imread(args.image)
-  test_bayer_to_rgb(cv2.cvtColor(test_image, cv2.COLOR_BGR2RGB))
+  test_image = cv2.cvtColor(test_image, cv2.COLOR_BGR2RGB)
+  
+  display_rgb(test_image)
+  test_rgb_to_bayer(test_image)
+  # test_bayer_to_rgb(test_image)
 
 
 

@@ -2,8 +2,7 @@ import time
 import taichi as ti
 import numpy as np
 import argparse
-from taichi_image import BayerPattern, rgb_to_bayer, bayer_to_rgb
-from taichi_image.bayer import u8vec3
+from taichi_image.bayer import BayerPattern, rgb_to_bayer, bayer_to_rgb
 
 import cv2
 import torch
@@ -33,10 +32,11 @@ def main():
   bayer = torch.from_numpy(bayer).to(device)
 
   out_rgb = torch.zeros( (*bayer.shape, 3), dtype=torch.uint8, device=device)
-  kernels = bayer_kernels(BayerPattern.RGGB)
+
+  f = bayer_to_rgb_kernel(ti.u8, ti.u8, BayerPattern.RGGB)
 
   benchmark("bayer_to_rgb_kernel", 
-    bayer_to_rgb_kernel, [bayer, out_rgb, kernels], 
+    f, [bayer, out_rgb], 
     iterations=10000, warmup=1000)
 
 
