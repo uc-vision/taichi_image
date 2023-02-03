@@ -3,6 +3,7 @@ import taichi as ti
 import taichi.math as tm
 from taichi_image.kernel import flatten, symmetrical, zip_tuple, u8vec3, u16vec3
 import numpy as np
+from taichi_image import types
 
 
 u16vec2 = ti.types.vector(2, ti.u16)
@@ -29,64 +30,70 @@ def decode12_pair(input:u8vec3) -> u16vec2:
     ], dt=ti.u16)
 
 
+def encode12_kernel(in_type):
+  scale = types.pixel_types[in_type]
 
-@ti.kernel
-def encode12_kernel(values:ti.types.ndarray(ti.u16, ndim=1), 
-  encoded:ti.types.ndarray(ti.u8, ndim=1)):
-  for i_half in ti.ndrange(values.shape[0] // 2):
-    i = i_half * 2   
-    bytes = encode12_pair(u16vec2(values[i], values[i + 1]))
+  @ti.func
+  def read_value(arr:ti.template(), i:ti.int32) -> ti.u16:
+    value = ti.cast(arr[i], ti.f32) * (4095 / scale)
+    return ti.cast(tm.clamp(value, 0, 4095), ti.u16)
+    value = 
 
-    idx = 3 * i_half
-    for k in ti.static(range(3)):
-      encoded[idx + k] = bytes[k]
+  @ti.kernel
+  def f(values:ti.types.ndarray(in_type, ndim=1), 
+    encoded:ti.types.ndarray(ti.u8, ndim=1)):
+    for i_half in ti.ndrange(values.shape[0] // 2):
+      i = i_half * 2   
+      bytes = encode12_pair(u16vec2(read_value(values, i), read_value(values, i + 1)))
 
-    
-@ti.kernel
-def decode12_kernel(encoded:ti.types.ndarray(ti.u8, ndim=1), out:ti.types.ndarray(ti.u16, ndim=1)):
-  for i_half in ti.ndrange(out.shape[0] // 2):
-    i = i_half * 2
-    idx = 3 * i_half
-    bytes = ti.Vector([encoded[idx + k] for k in ti.static(range(3))], dt=ti.u8)
-    pair = decode12_pair(bytes)
-    out[i], out[i + 1] = pair[0], pair[1]
+      idx = 3 * i_half
+      for k in ti.static(range(3)):
+        encoded[idx + k] = bytes[k]
 
-
-@ti.kernel
-def decode12f_kernel(encoded:ti.types.ndarray(ti.u8, ndim=1), out:ti.types.ndarray(ti.f16, ndim=1)):
-  for i_half in ti.ndrange(out.shape[0] // 2):
-    i = i_half * 2
-    idx = 3 * i_half
-    bytes = ti.Vector([encoded[idx + k] for k in ti.static(range(3))], dt=ti.u8)
-    pair = decode12_pair(bytes)
-    out[i] = ti.cast(pair[0], ti.f32) / 4096
-    out[i + 1] = ti.cast(pair[0], ti.f32) / 4096
+  return f
 
 
+def decode12_kernel(out_type):
 
-def encode12(values:np.ndarray):
-  assert values.dtype == np.uint16
+  scale = types.pixel_types[out_type]
 
+  @ti.func
+  def write_value(arr:ti.template(), i:ti.int32, value:ti.u16):
+    arr[i] = ti.cast(value / (4095 * scale), out_type)
+
+
+  @ti.kernel
+  def f(encoded:ti.types.ndarray(ti.u8, ndim=1), out:ti.types.ndarray(out_type, ndim=1)):
+    for i_half in ti.ndrange(out.shape[0] // 2):
+      i = i_half * 2
+      idx = 3 * i_half
+      bytes = ti.Vector([encoded[idx + k] for k in ti.static(range(3))], dt=ti.u8)
+      pair = decode12_pair(bytes)
+
+      write_value(out, i, pair[0])
+      write_value(out, i + 1, pair[1])
+      
+  return f
+
+
+
+    value = 
+
+def encode12(values):
   values = values.reshape(-1)
   assert len(values) % 2 == 0, f"length must be even for 12-bit encoding got: {len(values)}"
 
-  encoded = np.empty(((values.shape[0] * 3) // 2), dtype=np.uint8)
-
+  encoded = types.empty_array(values, ((values.shape[0] * 3) // 2), dtype=ti.uint8)
   encode12_kernel(values, encoded)
   return encoded
 
 
-def decode12(values:np.ndarray, dtype=np.uint16):
-  assert values.dtype == np.uint8
+def decode12(values, dtype=ti.u16):
+  assert types.ti_type(values) == ti.uint8
   assert len(values) % 3 == 0, f"length must be a factor of 3 for 12-bit decoding got: {len(values)}"
 
-  assert dtype in [np.uint16, np.float16], f"unsupported dtype: {dtype}"
-
-  decoded = np.empty(((values.shape[0] * 2) // 3), dtype=dtype)
-  if dtype == np.uint16:
-    decode12_kernel(values, decoded)
-  else:
-    decode12f_kernel(values, decoded)
+  decoded = types.empty_array(values, ((values.shape[0] * 2) // 3), dtype=dtype)
+  decode12_kernel(values, decoded)
   return decoded
 
 
