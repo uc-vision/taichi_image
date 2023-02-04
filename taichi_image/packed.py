@@ -4,6 +4,7 @@ import taichi.math as tm
 from taichi_image.kernel import flatten, symmetrical, zip_tuple, u8vec3, u16vec3
 import numpy as np
 from taichi_image import types
+from functools import cache
 
 
 u16vec2 = ti.types.vector(2, ti.u16)
@@ -29,15 +30,23 @@ def decode12_pair(input:u8vec3) -> u16vec2:
     ((bytes[1] & 0xf) << 8) | (bytes[2] & 0xff),
     ], dt=ti.u16)
 
-
-def encode12_kernel(in_type):
+@cache
+def encode12_kernel(in_type, scaled=False):
   scale = types.pixel_types[in_type]
+  
 
   @ti.func
-  def read_value(arr:ti.template(), i:ti.int32) -> ti.u16:
-    value = ti.cast(arr[i], ti.f32) * (4095 / scale)
-    return ti.cast(tm.clamp(value, 0, 4095), ti.u16)
-    value = 
+  def read_value_scaled(arr:ti.template(), i:ti.int32) -> ti.u16:
+    value = ti.cast(arr[i], ti.f32) * (4096.0 / scale)
+    rounded =  ti.round(value, ti.u16)
+    return rounded
+  
+  @ti.func
+  def read_value_direct(arr:ti.template(), i:ti.int32) -> ti.u16:
+    return arr[i]
+  
+  read_value = read_value_scaled if scaled else read_value_direct
+
 
   @ti.kernel
   def f(values:ti.types.ndarray(in_type, ndim=1), 
@@ -52,15 +61,21 @@ def encode12_kernel(in_type):
 
   return f
 
-
-def decode12_kernel(out_type):
-
+@cache
+def decode12_kernel(out_type, scaled=False):
   scale = types.pixel_types[out_type]
+  
 
   @ti.func
-  def write_value(arr:ti.template(), i:ti.int32, value:ti.u16):
-    arr[i] = ti.cast(value / (4095 * scale), out_type)
+  def write_value_scaled(arr:ti.template(), i:ti.int32, value:ti.u16):
+    val_float = ti.cast(value, ti.f32) * (scale / 4096.0)
+    arr[i] = ti.cast(val_float, out_type)
 
+  @ti.func
+  def write_value_direct(arr:ti.template(), i:ti.int32, value:ti.u16):
+    arr[i] = value
+
+  write_value = write_value_scaled if scaled else write_value_direct
 
   @ti.kernel
   def f(encoded:ti.types.ndarray(ti.u8, ndim=1), out:ti.types.ndarray(out_type, ndim=1)):
@@ -77,24 +92,30 @@ def decode12_kernel(out_type):
 
 
 
-    value = 
 
-def encode12(values):
+def encode12(values, scaled=False):
+  shape = values.shape
+  assert shape[-1] % 2 == 0, f"last dimension must be even for 12-bit encoding got: {shape}"
   values = values.reshape(-1)
-  assert len(values) % 2 == 0, f"length must be even for 12-bit encoding got: {len(values)}"
 
   encoded = types.empty_array(values, ((values.shape[0] * 3) // 2), dtype=ti.uint8)
-  encode12_kernel(values, encoded)
-  return encoded
+  f = encode12_kernel(types.ti_type(values), scaled=scaled)
+    
+  f(values, encoded)
+  return encoded.reshape(shape[:-1] + (shape[-1] * 3 // 2,))
 
 
-def decode12(values, dtype=ti.u16):
+def decode12(values, dtype=ti.u16, scaled=False):
+  shape = values.shape
   assert types.ti_type(values) == ti.uint8
-  assert len(values) % 3 == 0, f"length must be a factor of 3 for 12-bit decoding got: {len(values)}"
+  assert shape[-1] % 3 == 0, f"last dimension must be a factor of 3 for 12-bit decoding got: {shape}"
+  values = values.reshape(-1)
 
   decoded = types.empty_array(values, ((values.shape[0] * 2) // 3), dtype=dtype)
-  decode12_kernel(values, decoded)
-  return decoded
+  f = decode12_kernel(dtype, scaled=scaled)
+
+  f(values, decoded)
+  return decoded.reshape(shape[:-1] + (shape[-1] * 2 // 3,))
 
 
 

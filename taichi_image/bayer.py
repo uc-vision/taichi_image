@@ -1,4 +1,5 @@
 import enum
+from functools import cache
 import taichi as ti
 from taichi.math import ivec2, vec3
 import torch
@@ -97,7 +98,7 @@ def rgb_to_bayer_kernel(image: ti.types.ndarray(ndim=3),
     bayer[y + 1, x] = image[y + 1, x, p3]
     bayer[y + 1, x + 1] = image[y + 1, x + 1, p4]
 
-    
+@cache    
 @typechecked
 def bayer_to_rgb_kernel(pattern:BayerPattern, in_dtype=ti.u8, out_dtype=ti.u8):
 

@@ -12,7 +12,7 @@ f16vec3 = ti.types.vector(3, ti.f16)
 pixel_types = {
   ti.u8: 255,
   ti.u16: 65535,
-  ti.s16: 32767,
+  ti.i16: 32767,
   ti.f16: 1.0,
   ti.f32: 1.0
 }

@@ -1,3 +1,4 @@
+from functools import cache
 import taichi as ti
 import numpy as np
 import argparse
@@ -28,6 +29,7 @@ def display_rgb(k, rgb_image):
   cv2.imshow(k, cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR))
   cv2.waitKey(0)
 
+@cache
 def test_rgb_to_bayer(rgb_image):
 
   bayer_images = make_bayer_images(rgb_image)
