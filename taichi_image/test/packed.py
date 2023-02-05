@@ -8,11 +8,9 @@ def test_encode_decode(n=1000):
 
     size = np.random.randint(n)*2
 
-
     x = np.random.randint(0, 2**12, size=size, dtype=np.uint16)
     encoded = encode12(x)
     decoded = decode12(encoded)
-
 
     assert np.all(x == decoded)
 

@@ -1,5 +1,4 @@
 import enum
-from functools import cache
 import taichi as ti
 from taichi.math import ivec2, vec3
 import torch
@@ -7,6 +6,8 @@ import torch
 import numpy as np
 
 from taichi_image.kernel import flatten, symmetrical, zip_tuple, u8vec3
+from taichi_image.util import cache
+
 from . import types
 
 from typeguard import typechecked

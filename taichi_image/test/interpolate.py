@@ -1,4 +1,4 @@
-from functools import cache
+from taichi_image.util import cache
 import taichi as ti
 import taichi.math as tm
 
@@ -20,7 +20,8 @@ def sample_bilinear(src: img2d, t: ti.f32):
               index_clamped(src, p1 + tm.ivec2(1, 0)),
               frac.x)
   y2 = tm.mix(index_clamped(src, p1 + tm.ivec2(0, 1)),
-              index_clamped(src, p1 + tm.ivec2(1, 1)), frac.x)
+              index_clamped(src, p1 + tm.ivec2(1, 1)), 
+              frac.x)
   return tm.mix(y1, y2, frac.y)
 
 

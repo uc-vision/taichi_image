@@ -4,7 +4,7 @@ import taichi.math as tm
 from taichi_image.kernel import flatten, symmetrical, zip_tuple, u8vec3, u16vec3
 import numpy as np
 from taichi_image import types
-from functools import cache
+from taichi_image.util import cache
 
 
 u16vec2 = ti.types.vector(2, ti.u16)

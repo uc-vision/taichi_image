@@ -1,8 +1,8 @@
-from functools import cache
 import taichi as ti
 import numpy as np
 import argparse
 from taichi_image.bayer import BayerPattern, rgb_to_bayer, bayer_to_rgb
+from taichi_image.util import cache
 
 import cv2
 
