@@ -101,7 +101,9 @@ def rgb_to_bayer_kernel(image: ti.types.ndarray(ndim=3),
 
 @cache    
 @typechecked
-def bayer_to_rgb_kernel(pattern:BayerPattern, in_dtype=ti.u8, out_dtype=ti.u8):
+def bayer_to_rgb_kernel(pattern:BayerPattern, in_dtype=ti.u8, out_dtype=None):
+  if out_dtype is None:
+    out_dtype = in_dtype
 
   in_scale = types.pixel_types[in_dtype]
   out_scale = types.pixel_types[out_dtype]

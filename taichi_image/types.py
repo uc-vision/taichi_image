@@ -53,10 +53,13 @@ def ti_type(in_arr):
     return type_to_ti[str(in_arr.dtype)]
   elif isinstance(in_arr, torch.Tensor):
     return torch_to_ti[str(in_arr.dtype)]
+  else:
+    raise ValueError(f'Unsupported input type {type(in_arr)}')
 
 def empty_array(in_arr, shape=None, dtype=None):
   shape = in_arr.shape if shape is None else shape
   dtype = ti_type(in_arr) if dtype is None else dtype
+
 
   if isinstance(in_arr, np.ndarray):
     return np.empty(shape, ti_to_np[dtype])

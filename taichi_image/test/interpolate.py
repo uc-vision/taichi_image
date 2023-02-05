@@ -1,34 +1,28 @@
-from taichi_image.util import cache
 import taichi as ti
-import taichi.math as tm
+import numpy as np
 
-img2d = ti.types.ndarray(ndim=2)  # Color image type
+import cv2
 
+from taichi_image.test.arguments import init_with_args
+from taichi_image.interpolate import resize_bilinear, scale_bilinear
 
-@ti.func
-def index_clamped(src: img2d, idx: ti.ivec2):
-  return src[tm.clamp(idx, 0, ti.ivec2(src.shape) - 1)]
-
-
-@ti.func
-def sample_bilinear(src: img2d, t: ti.f32):
-  p = t * ti.cast(tm.ivec2(src.shape), ti.f32)
-  p1 = ti.cast(p, ti.i32)
-
-  frac = p - ti.cast(p1, ti.f32)
-  y1 = tm.mix(index_clamped(src, p1), 
-              index_clamped(src, p1 + tm.ivec2(1, 0)),
-              frac.x)
-  y2 = tm.mix(index_clamped(src, p1 + tm.ivec2(0, 1)),
-              index_clamped(src, p1 + tm.ivec2(1, 1)), 
-              frac.x)
-  return tm.mix(y1, y2, frac.y)
+def test_resize(test_image):
+  # out =  resize_bilinear(test_image, (1024, 1024))
+  out = scale_bilinear(test_image, 0.125)
+  cv2.imshow("out", out)
+  cv2.waitKey(0)
 
 
-@ti.kernel
-def bilinear(src: img2d, dst: img2d):
-  scale = ti.cast(src.shape, ti.f32) / ti.cast(dst.shape, ti.f32)
+def main():
+  args = init_with_args()
 
-  for I in ti.grouped(dst):
-    p = ti.cast(I, ti.f32) * scale
-    dst[I] = sample_bilinear(src, p)
+  test_image = cv2.imread(args.image)
+  # test_image = test_image.astype(np.float32) / 255
+  
+  # test_rgb_to_bayer(test_image)
+  test_resize(test_image)
+
+
+
+if __name__ == "__main__":
+  main()
