@@ -64,7 +64,7 @@ def empty_array(in_arr, shape=None, dtype=None):
   if isinstance(in_arr, np.ndarray):
     return np.empty(shape, ti_to_np[dtype])
   elif isinstance(in_arr, torch.Tensor):
-    return torch.empty(shape, ti_to_torch[dtype], device=in_arr.device)    
+    return torch.empty(tuple(shape), dtype=ti_to_torch[dtype], device=in_arr.device)    
 
 
 def zeros_array(in_arr, shape=None, dtype=None):
