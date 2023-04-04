@@ -61,8 +61,8 @@ def encode12_kernel(in_type, scaled=False):
 
   return f
 
-@cache
-def decode12_kernel(out_type, scaled=False):
+@cache 
+def decode12_func(out_type, scaled=False):
   scale = types.pixel_types[out_type]
   
 
@@ -77,7 +77,7 @@ def decode12_kernel(out_type, scaled=False):
 
   write_value = write_value_scaled if scaled else write_value_direct
 
-  @ti.kernel
+  @ti.func
   def f(encoded:ti.types.ndarray(ti.u8, ndim=1), out:ti.types.ndarray(out_type, ndim=1)):
     for i_half in ti.ndrange(out.shape[0] // 2):
       i = i_half * 2
@@ -87,8 +87,17 @@ def decode12_kernel(out_type, scaled=False):
 
       write_value(out, i, pair[0])
       write_value(out, i + 1, pair[1])
+
+@cache
+def decode12_kernel(out_type, scaled=False):
+  f = decode12_func(out_type, scaled=scaled)
+
+  @ti.kernel
+  def k(encoded:ti.types.ndarray(ti.u8, ndim=1), 
+        out:ti.types.ndarray(out_type, ndim=1)):
+    f(encoded, out)
       
-  return f
+  return k
 
 
 
