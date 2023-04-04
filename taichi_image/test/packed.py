@@ -17,7 +17,6 @@ def test_encode_decode(n=1000):
 
 def main():
   ti.init(arch=ti.cuda, log_level=ti.DEBUG)
-
   test_encode_decode()
 
 

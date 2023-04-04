@@ -153,16 +153,16 @@ def bayer_to_rgb_kernel(pattern:BayerPattern, in_dtype=ti.u8, out_dtype=None):
   return f
 
 
-def rgb_to_bayer(image, pattern:BayerPattern):
+def rgb_to_bayer(image, pattern:BayerPattern=BayerPattern.RGGB):
   assert image.ndim == 3 and image.shape[2] == 3, "image must be RGB"
 
-  bayer = types.zeros_array(image, image.shape[:2], dtype=image.dtype)
+  bayer = types.zeros_array(image, image.shape[:2], dtype=types.ti_type(image))
   rgb_to_bayer_kernel(image, bayer, pattern.pixel_order)
   return bayer
 
 
   
-def bayer_to_rgb(bayer, pattern:BayerPattern, dtype=None):
+def bayer_to_rgb(bayer, pattern:BayerPattern=BayerPattern.RGGB, dtype=None):
   assert bayer.ndim == 2 , "image must be mono bayer"
 
   

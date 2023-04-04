@@ -92,7 +92,6 @@ def decode12_kernel(out_type, scaled=False):
 
 
 
-
 def encode12(values, scaled=False):
   shape = values.shape
   assert shape[-1] % 2 == 0, f"last dimension must be even for 12-bit encoding got: {shape}"
