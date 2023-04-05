@@ -33,7 +33,7 @@ def bilinear_kernel(in_dtype=ti.u8, out_dtype=None):
   out_vec3 = ti.types.vector(3, out_dtype)
 
 
-  intensity_scale = types.pixel_types[out_dtype] / types.pixel_types[in_dtype]
+  intensity_scale = types.scale_factor[out_dtype] / types.scale_factor[in_dtype]
 
   @ti.kernel
   def f(src: ti.types.ndarray(dtype=in_vec3, ndim=2), 

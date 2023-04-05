@@ -9,7 +9,7 @@ f16vec3 = ti.types.vector(3, ti.f16)
 
 
 
-pixel_types = {
+scale_factor = {
   ti.u8: 255,
   ti.u16: 65535,
   ti.i16: 32767,

@@ -18,24 +18,33 @@ def make_bayer12(image, pattern=BayerPattern.RGGB):
 
   assert image.dtype == np.uint16
 
-  bayer = rgb_to_bayer(image, pattern)
-  return encode12(bayer.reshape(-1), scaled=True)
+
+  bayer16 = rgb_to_bayer(image, pattern)
+  return encode12(bayer16.reshape(-1), scaled=True)
       
   
 def bayer12_pipeline(image_shape:Tuple[int, int],
   bayer12: ti.types.ndarray(ti.u8, ndim=2), pattern=BayerPattern.RGGB):
 
-  bayer16 = decode12(bayer12, dtype=ti.u16).reshape(image_shape)
+  bayer16 = decode12(bayer12, dtype=ti.u16, scaled=True).reshape(image_shape)
   rgb16 = bayer_to_rgb(bayer16, pattern)
-  
-  return (tonemap_reinhard(rgb16) * 255).astype(np.uint8)
 
+  return tonemap_reinhard(rgb16)
+
+
+def trim_image(image):
+  if image.shape[0] % 2 == 1:
+    image = image[:-1]
+  
+  if image.shape[1] % 2 == 1:
+    image = image[:, :-1]
+  
+  return image
 
 def main():
   args = init_with_args()
   test_image = cv2.imread(args.image, cv2.IMREAD_UNCHANGED)
-  test_image = cv2.cvtColor(test_image, cv2.COLOR_BGR2RGB)
-
+  test_image = trim_image(cv2.cvtColor(test_image, cv2.COLOR_BGR2RGB))
 
   bayer12 = make_bayer12(test_image)
   result = bayer12_pipeline(test_image.shape[:2], bayer12)

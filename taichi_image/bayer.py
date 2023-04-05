@@ -105,8 +105,8 @@ def bayer_to_rgb_kernel(pattern:BayerPattern, in_dtype=ti.u8, out_dtype=None):
   if out_dtype is None:
     out_dtype = in_dtype
 
-  in_scale = types.pixel_types[in_dtype]
-  out_scale = types.pixel_types[out_dtype]
+  in_scale = types.scale_factor[in_dtype]
+  out_scale = types.scale_factor[out_dtype]
   
   out_vec3 = ti.types.vector(3, out_dtype)
   kernels =  tuple([bayer_kernels[i] for i in kernel_patterns[pattern] ])
@@ -122,12 +122,15 @@ def bayer_to_rgb_kernel(pattern:BayerPattern, in_dtype=ti.u8, out_dtype=None):
 
     image_size = ivec2(image.shape)
     c = vec3(0.0)
+    t = vec3(0.0)
 
     for offset, weight in ti.static(weights):
-      idx = ti.math.clamp(i + offset, 0, image_size - 1)
-      c += ti.cast(image[idx], ti.f32) * vec3(weight)
+      idx = i + offset
+      if idx[0] >= 0 and idx[0] < image_size[0] and idx[1] >= 0 and idx[1] < image_size[1]:
+        c += ti.cast(image[idx], ti.f32) * vec3(weight)
+        t += vec3(weight)
 
-    return ti.math.clamp(c / (in_scale * 16.0), 0, 1.0)
+    return ti.math.clamp(c / (in_scale * t), 0, 1.0)
 
 
   @ti.kernel
@@ -156,7 +159,7 @@ def bayer_to_rgb_kernel(pattern:BayerPattern, in_dtype=ti.u8, out_dtype=None):
 def rgb_to_bayer(image, pattern:BayerPattern=BayerPattern.RGGB):
   assert image.ndim == 3 and image.shape[2] == 3, "image must be RGB"
 
-  bayer = types.zeros_array(image, image.shape[:2], dtype=types.ti_type(image))
+  bayer = types.empty_array(image, image.shape[:2], dtype=types.ti_type(image))
   rgb_to_bayer_kernel(image, bayer, pattern.pixel_order)
   return bayer
 
@@ -164,7 +167,7 @@ def rgb_to_bayer(image, pattern:BayerPattern=BayerPattern.RGGB):
   
 def bayer_to_rgb(bayer, pattern:BayerPattern=BayerPattern.RGGB, dtype=None):
   assert bayer.ndim == 2 , "image must be mono bayer"
-
+  assert bayer.shape[0] % 2 == 0 and bayer.shape[1] % 2 == 0, "image must be even size"
   
   rgb = types.empty_array(bayer, shape=bayer.shape + (3,), dtype=dtype)
   f = bayer_to_rgb_kernel(pattern, types.ti_type(bayer), types.ti_type(rgb))

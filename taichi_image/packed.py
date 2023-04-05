@@ -32,12 +32,12 @@ def decode12_pair(input:u8vec3) -> u16vec2:
 
 @cache
 def encode12_kernel(in_type, scaled=False):
-  scale = types.pixel_types[in_type]
+  scale = types.scale_factor[in_type]
   
 
   @ti.func
   def read_value_scaled(arr:ti.template(), i:ti.int32) -> ti.u16:
-    value = ti.cast(arr[i], ti.f32) * (4096.0 / scale)
+    value = ti.cast(arr[i], ti.f32) * (4095.0 / scale)
     rounded =  ti.round(value, ti.u16)
     return rounded
   
@@ -63,12 +63,12 @@ def encode12_kernel(in_type, scaled=False):
 
 @cache 
 def decode12_func(out_type, scaled=False):
-  scale = types.pixel_types[out_type]
+  scale = types.scale_factor[out_type]
   
 
   @ti.func
   def write_value_scaled(arr:ti.template(), i:ti.int32, value:ti.u16):
-    val_float = ti.cast(value, ti.f32) * (scale / 4096.0)
+    val_float = ti.cast(value, ti.f32) * (scale / 4095.0)
     arr[i] = ti.cast(val_float, out_type)
 
   @ti.func
