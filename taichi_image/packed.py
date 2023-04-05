@@ -78,7 +78,7 @@ def decode12_func(out_type, scaled=False):
   write_value = write_value_scaled if scaled else write_value_direct
 
   @ti.func
-  def f(encoded:ti.types.ndarray(ti.u8, ndim=1), out:ti.types.ndarray(out_type, ndim=1)):
+  def decode(encoded:ti.types.ndarray(ti.u8, ndim=1), out:ti.types.ndarray(out_type, ndim=1)):
     for i_half in ti.ndrange(out.shape[0] // 2):
       i = i_half * 2
       idx = 3 * i_half
@@ -87,6 +87,8 @@ def decode12_func(out_type, scaled=False):
 
       write_value(out, i, pair[0])
       write_value(out, i + 1, pair[1])
+
+  return decode
 
 @cache
 def decode12_kernel(out_type, scaled=False):
