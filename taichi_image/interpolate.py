@@ -55,7 +55,7 @@ def resize_bilinear(src, size, scale=None, dtype=None):
   if scale is None:
     scale = tm.vec2(size) / tm.vec2(src.shape[:2])
 
-  dst = types.zeros_array(src, (size[1], size[0], 3), dtype)
+  dst = types.zeros_like(src, (size[1], size[0], 3), dtype)
   f = bilinear_kernel(types.ti_type(src), dtype)
   f(src, dst, tm.vec2(scale))
   return dst

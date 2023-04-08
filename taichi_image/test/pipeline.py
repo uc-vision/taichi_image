@@ -12,12 +12,12 @@ from taichi_image.test.bayer import display_rgb
 from taichi_image.tonemap import tonemap_reinhard
 
 
+
 def make_bayer12(image, pattern=BayerPattern.RGGB):
   if image.dtype == np.uint8:
     image = image.astype(np.uint16) * 256
 
   assert image.dtype == np.uint16
-
 
   bayer16 = rgb_to_bayer(image, pattern)
   return encode12(bayer16.reshape(-1), scaled=True)
@@ -26,7 +26,7 @@ def make_bayer12(image, pattern=BayerPattern.RGGB):
 def bayer12_pipeline(image_shape:Tuple[int, int],
   bayer12: ti.types.ndarray(ti.u8, ndim=2), pattern=BayerPattern.RGGB):
 
-  bayer16 = decode12(bayer12, dtype=ti.u16, scaled=True).reshape(image_shape)
+  bayer16 = decode12(bayer12, dtype=ti.f16, scaled=True).reshape(image_shape)
   rgb16 = bayer_to_rgb(bayer16, pattern)
 
   return tonemap_reinhard(rgb16)
@@ -48,9 +48,15 @@ def main():
 
   bayer12 = make_bayer12(test_image)
   result = bayer12_pipeline(test_image.shape[:2], bayer12)
-
   display_rgb("result", result)
   
+
+  # import torch
+
+  # result = bayer12_pipeline(test_image.shape[:2], 
+  #                           torch.from_numpy(bayer12).to(args.device))
+
+  # display_rgb("result", result.cpu().numpy())
 
 if __name__ == "__main__":
   main()

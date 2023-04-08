@@ -48,7 +48,7 @@ def linear_kernel(src: ti.types.ndarray(ndim=3), dest: ti.types.ndarray(ndim=3),
 
 
 def tonemap_linear(src, gamma=1.0, dtype=None, scale_factor=1.0):
-  output = types.empty_array(src, src.shape, dtype or types.ti_type[src])
+  output = types.empty_like(src, src.shape, dtype or types.ti_type[src])
   linear_kernel(src, output, gamma, scale_factor)
   return output
 
@@ -65,72 +65,68 @@ def bgr_gray(bgr) -> ti.f32:
   # 0.114⋅B+0.587⋅G+0.299⋅R
   return tm.dot(bgr, tm.vec3(0.114, 0.587, 0.299))
 
+@ti.dataclass
+class ImageStatistics:
+  log_min: ti.f32
+  log_max: ti.f32
+  log_mean: ti.f32
+  gray_mean: ti.f32
+  rgb_mean: tm.vec3
+
+@ti.func
+def image_statistics(image: ti.template()) -> ImageStatistics:
+  total_log_gray = 0.0
+  total_gray = 0.0
+  total_rgb = tm.vec3(0.0)
+  
+  log_min = ti.f32(np.inf)
+  log_max = ti.f32(np.inf)
+
+  for i, j in ti.ndrange(image.shape[0], image.shape[1]):
+    gray = ti.f32(rgb_gray(image[i, j]))
+    log_gray = tm.log(tm.max(gray, 1e-4))
+
+    # To side-step a bug use negative atomic_min instead of atomic_max
+    ti.atomic_min(log_max, -log_gray)
+    ti.atomic_min(log_min, log_gray)
+
+    total_log_gray += log_gray
+    total_gray += gray
+    total_rgb += image[i, j]
+
+  n = (image.shape[0] * image.shape[1])
+  return ImageStatistics(log_min, -log_max, 
+                        total_log_gray / n, total_gray / n, total_rgb / n)
+
+
+
+@ti.func
+def reinhard_func(image : ti.template(),
+                    intensity:ti.f32, 
+                    light_adapt:ti.f32, 
+                    color_adapt:ti.f32):
+  
+  stats = image_statistics(image)
+
+  key = (stats.log_max - stats.log_mean) / (stats.log_max - stats.log_min)
+  map_key = 0.3 + 0.7 * tm.pow(key, 1.4)
+
+  mean = lerp(color_adapt, stats.gray_mean, stats.rgb_mean)
+  for i, j in ti.ndrange(image.shape[0], image.shape[1]):
+    gray = rgb_gray(image[i, j])
+
+    # Blend between gray value and RGB value
+    adapt_color = lerp(color_adapt, tm.vec3(gray), image[i, j])
+
+    # Blend between mean and local adaptation
+    adapt_mean = lerp(light_adapt, mean, adapt_color)
+    adapt = tm.pow(tm.exp(-intensity) * adapt_mean, map_key)
+
+    image[i, j] = (image[i, j] * (1.0 / (adapt + image[i, j]))) 
+
 
 @cache
 def reinhard_kernel(in_dtype=ti.f32, out_dtype=ti.f32):
-
-  @ti.func
-  def image_statistics(image: ti.template()):
-    total_log_gray = 0.0
-    total_gray = 0.0
-    total_rgb = tm.vec3(0.0)
-    
-    log_min = ti.f32(np.inf)
-    log_max = ti.f32(np.inf)
-
-    for i, j in ti.ndrange(image.shape[0], image.shape[1]):
-      gray = ti.f32(rgb_gray(image[i, j]))
-      log_gray = tm.log(tm.max(gray, 1e-4))
-
-      # To side-step a bug use negative atomic_min instead of atomic_max
-      ti.atomic_min(log_max, -log_gray)
-      ti.atomic_min(log_min, log_gray)
-
-      total_log_gray += log_gray
-      total_gray += gray
-      total_rgb += image[i, j]
-
-    n = (image.shape[0] * image.shape[1])
-    log_mean = total_log_gray / n
-    gray_mean = total_gray / n
-    image_mean = total_rgb / n
-
-
-    return log_min, -log_max, log_mean, gray_mean, image_mean
-
-
-
-  @ti.func
-  def reinhard_func(image : ti.template(),
-                    output: ti.template(),
-                      gamma:ti.f32, 
-                      intensity:ti.f32, 
-                      light_adapt:ti.f32, 
-                      color_adapt:ti.f32):
-    
-  
-    log_min, log_max, log_mean, gray_mean, image_mean = image_statistics(image)
-
-    key = (log_max - log_mean) / (log_max - log_min)
-    map_key = 0.3 + 0.7 * tm.pow(key, 1.4)
-
-    mean = lerp(color_adapt, gray_mean, image_mean)
-    for i, j in ti.ndrange(image.shape[0], image.shape[1]):
-      gray = rgb_gray(image[i, j])
-
-      # Blend between gray value and RGB value
-      adapt_color = lerp(color_adapt, tm.vec3(gray), image[i, j])
-
-      # Blend between mean and local adaptation
-      adapt_mean = lerp(light_adapt, mean, adapt_color)
-      adapt = tm.pow(tm.exp(-intensity) * adapt_mean, map_key)
-
-      image[i, j] = (image[i, j] * (1.0 / (adapt + image[i, j]))) 
-
-
-    # Gamma correction
-    linear_func(image, output, gamma, types.scale_factor[out_dtype], out_dtype)
-    
 
   @ti.kernel
   def kernel(src: ti.types.ndarray(dtype=ti.types.vector(3, in_dtype), ndim=2), 
@@ -142,14 +138,17 @@ def reinhard_kernel(in_dtype=ti.f32, out_dtype=ti.f32):
                       color_adapt:ti.f32):
     
     normalise_range(src, image)
-    reinhard_func(image, dest, gamma, intensity, light_adapt, color_adapt)
+    reinhard_func(image, intensity, light_adapt, color_adapt)
+
+    # Gamma correction
+    linear_func(image, dest, gamma, types.scale_factor[out_dtype], out_dtype)
 
   return kernel
 
 def tonemap_reinhard(src, gamma=1.0, intensity=1.0, light_adapt=1.0, color_adapt=0.0, dtype=ti.uint8):
 
-  output = types.empty_array(src, src.shape, dtype)
-  temp = types.empty_array(src, src.shape, ti.f32)
+  output = types.empty_like(src, src.shape, dtype)
+  temp = types.empty_like(src, src.shape, ti.f32)
 
   kernel = reinhard_kernel(types.ti_type(src), dtype)
 

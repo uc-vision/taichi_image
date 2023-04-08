@@ -56,18 +56,18 @@ def ti_type(in_arr):
   else:
     raise ValueError(f'Unsupported input type {type(in_arr)}')
 
-def empty_array(in_arr, shape=None, dtype=None):
+def empty_like(in_arr, shape=None, dtype=None):
   shape = in_arr.shape if shape is None else shape
   dtype = ti_type(in_arr) if dtype is None else dtype
-
 
   if isinstance(in_arr, np.ndarray):
     return np.empty(shape, ti_to_np[dtype])
   elif isinstance(in_arr, torch.Tensor):
+    assert dtype in ti_to_torch, f'Unsupported torch dtype {dtype}'
     return torch.empty(tuple(shape), dtype=ti_to_torch[dtype], device=in_arr.device)    
 
 
-def zeros_array(in_arr, shape=None, dtype=None):
+def zeros_like(in_arr, shape=None, dtype=None):
   shape = in_arr.shape if shape is None else shape
   dtype = ti_type(in_arr) if dtype is None else dtype
   
@@ -75,4 +75,5 @@ def zeros_array(in_arr, shape=None, dtype=None):
   if isinstance(in_arr, np.ndarray):
     return np.zeros(shape, ti_to_np[dtype])
   elif isinstance(in_arr, torch.Tensor):
+    assert dtype in ti_to_torch, f'Unsupported torch dtype {dtype}'
     return torch.zeros(shape, ti_to_torch[dtype], device=in_arr.device)       

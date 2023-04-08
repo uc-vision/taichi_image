@@ -108,7 +108,7 @@ def encode12(values, scaled=False):
   assert shape[-1] % 2 == 0, f"last dimension must be even for 12-bit encoding got: {shape}"
   values = values.reshape(-1)
 
-  encoded = types.empty_array(values, ((values.shape[0] * 3) // 2), dtype=ti.uint8)
+  encoded = types.empty_like(values, ((values.shape[0] * 3) // 2, ), dtype=ti.uint8)
   f = encode12_kernel(types.ti_type(values), scaled=scaled)
     
   f(values, encoded)
@@ -121,7 +121,7 @@ def decode12(values, dtype=ti.u16, scaled=False):
   assert shape[-1] % 3 == 0, f"last dimension must be a factor of 3 for 12-bit decoding got: {shape}"
   values = values.reshape(-1)
 
-  decoded = types.empty_array(values, ((values.shape[0] * 2) // 3), dtype=dtype)
+  decoded = types.empty_like(values, ((values.shape[0] * 2) // 3,), dtype=dtype)
   f = decode12_kernel(dtype, scaled=scaled)
 
   f(values, decoded)
