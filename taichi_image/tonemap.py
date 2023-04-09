@@ -13,7 +13,7 @@ def lerp(t, a, b):
   return a + t * (b - a)
 
 @ti.func 
-def min_max(image: ti.template()) -> Tuple[float, float]:
+def min_max_func(image: ti.template()) -> Tuple[float, float]:
     min = np.inf
     max = -np.inf
 
@@ -24,10 +24,23 @@ def min_max(image: ti.template()) -> Tuple[float, float]:
 
     return min, max
 
+@cache
+def min_max_kernel(dtype=ti.f32):
+  vec_type=ti.types.vector(3, dtype)
+
+  @ti.kernel
+  def k(image: ti.types.ndarray(vec_type, ndim=2)) -> ti.types.vector(2, ti.f32):
+    return min_max_func(image)
+  
+  return k
+
+def min_max(image):
+  dtype = types.ti_type(image)
+  return min_max_kernel(dtype)(image)
 
 @ti.func
 def linear_func(image: ti.template(), output:ti.template(), gamma:ti.f32, scale_factor:ti.f32, dtype):
-    min, max = min_max(image)
+    min, max = min_max_func(image)
     range = max - min
 
     for i in ti.grouped(ti.ndrange(*image.shape)):
@@ -36,7 +49,7 @@ def linear_func(image: ti.template(), output:ti.template(), gamma:ti.f32, scale_
 
 @ti.func
 def normalise_range(image: ti.template(), dest: ti.template()):
-    min, max = min_max(image)
+    min, max = min_max_func(image)
     range = max - min
 
     for i in ti.grouped(ti.ndrange(*image.shape)):

@@ -48,14 +48,13 @@ def bilinear_kernel(in_dtype=ti.u8, out_dtype=None):
   return f
 
 def resize_bilinear(src, size, scale=None, dtype=None):
-  
   if dtype is None:
     dtype = types.ti_type(src)
 
   if scale is None:
     scale = tm.vec2(size) / tm.vec2(src.shape[:2])
 
-  dst = types.zeros_like(src, (size[1], size[0], 3), dtype)
+  dst = types.empty_like(src, (size[1], size[0], 3), dtype)
   f = bilinear_kernel(types.ti_type(src), dtype)
   f(src, dst, tm.vec2(scale))
   return dst

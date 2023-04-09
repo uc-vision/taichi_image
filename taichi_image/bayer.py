@@ -10,8 +10,6 @@ from taichi_image.util import cache
 
 from . import types
 
-from typeguard import typechecked
-
 
 
 def diamond_kernel(weights):
@@ -100,15 +98,13 @@ def rgb_to_bayer_kernel(image: ti.types.ndarray(ndim=3),
     bayer[y + 1, x + 1] = image[y + 1, x + 1, p4]
 
 @cache    
-@typechecked
-def bayer_to_rgb_kernel(pattern:BayerPattern, in_dtype=ti.u8, out_dtype=None):
+def bayer_to_rgb_func(pattern:BayerPattern, in_dtype=ti.u8, out_dtype=None):
   if out_dtype is None:
     out_dtype = in_dtype
 
   in_scale = types.scale_factor[in_dtype]
   out_scale = types.scale_factor[out_dtype]
   
-  out_vec3 = ti.types.vector(3, out_dtype)
   kernels =  tuple([bayer_kernels[i] for i in kernel_patterns[pattern] ])
 
   @ti.func
@@ -133,9 +129,8 @@ def bayer_to_rgb_kernel(pattern:BayerPattern, in_dtype=ti.u8, out_dtype=None):
     return ti.math.clamp(c / (in_scale * t), 0, 1.0)
 
 
-  @ti.kernel
-  def f(bayer: ti.types.ndarray(dtype=in_dtype, ndim=2),
-              out: ti.types.ndarray(dtype=out_vec3, ndim=2)):
+  @ti.func
+  def f(bayer: ti.template(), out: ti.template()):
 
     for i, j in ti.ndrange(bayer.shape[0] // 2, bayer.shape[1] // 2):
       x, y = i * 2, j * 2
@@ -151,7 +146,17 @@ def bayer_to_rgb_kernel(pattern:BayerPattern, in_dtype=ti.u8, out_dtype=None):
     
       write_pixel(out, ivec2(x + 1, y + 1),
         filter_at(bayer, kernels[3], ivec2(x + 1, y + 1)))
+      
+  return f
 
+@cache    
+def bayer_to_rgb_kernel(pattern:BayerPattern, in_dtype=ti.u8, out_dtype=None):
+  func = bayer_to_rgb_func(pattern, in_dtype, out_dtype)
+
+  @ti.kernel
+  def f(bayer: ti.types.ndarray(dtype=in_dtype, ndim=2),
+              out: ti.types.ndarray(dtype=ti.types.vector(3, out_dtype), ndim=2)):
+    func(bayer, out)
 
   return f
 
