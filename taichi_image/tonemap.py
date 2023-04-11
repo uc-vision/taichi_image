@@ -34,6 +34,18 @@ def min_max_kernel(dtype=ti.f32):
   
   return k
 
+@cache
+def scale_offset_kernel(dtype=ti.f32):
+  vec_type=ti.types.vector(3, dtype)
+
+  @ti.kernel 
+  def k(image: ti.types.ndarray(vec_type, ndim=2), scale: ti.f32, offset: ti.f32):
+    for i in ti.grouped(ti.ndrange(*image.shape)):
+      image[i] = ti.cast((image[i] + offset) * scale, dtype)
+
+  return k
+
+
 def min_max(image):
   dtype = types.ti_type(image)
   return min_max_kernel(dtype)(image)
@@ -117,7 +129,8 @@ def image_statistics(image: ti.template()) -> ImageStatistics:
 def reinhard_func(image : ti.template(),
                     intensity:ti.f32, 
                     light_adapt:ti.f32, 
-                    color_adapt:ti.f32):
+                    color_adapt:ti.f32,
+                    dtype:ti.template()):
   
   stats = image_statistics(image)
 
@@ -135,23 +148,21 @@ def reinhard_func(image : ti.template(),
     adapt_mean = lerp(light_adapt, mean, adapt_color)
     adapt = tm.pow(tm.exp(-intensity) * adapt_mean, map_key)
 
-    image[i, j] = (image[i, j] * (1.0 / (adapt + image[i, j]))) 
+    image[i, j] = ti.cast(image[i, j] * (1.0 / (adapt + image[i, j])), dtype) 
 
 
 @cache
 def reinhard_kernel(in_dtype=ti.f32, out_dtype=ti.f32):
 
   @ti.kernel
-  def kernel(src: ti.types.ndarray(dtype=ti.types.vector(3, in_dtype), ndim=2), 
-             image: ti.types.ndarray(dtype=ti.types.vector(3, ti.f32), ndim=2), 
+  def kernel(image: ti.types.ndarray(dtype=ti.types.vector(3, in_dtype), ndim=2), 
              dest: ti.types.ndarray(dtype=ti.types.vector(3, out_dtype), ndim=2), 
                       gamma:ti.f32, 
                       intensity:ti.f32, 
                       light_adapt:ti.f32, 
                       color_adapt:ti.f32):
     
-    normalise_range(src, image)
-    reinhard_func(image, intensity, light_adapt, color_adapt)
+    reinhard_func(image, intensity, light_adapt, color_adapt, in_dtype)
 
     # Gamma correction
     linear_func(image, dest, gamma, types.scale_factor[out_dtype], out_dtype)
@@ -165,5 +176,6 @@ def tonemap_reinhard(src, gamma=1.0, intensity=1.0, light_adapt=1.0, color_adapt
 
   kernel = reinhard_kernel(types.ti_type(src), dtype)
 
+  linear_kernel(src, temp, gamma=1.0)
   kernel(src, temp, output, gamma, intensity, light_adapt, color_adapt)
   return output
