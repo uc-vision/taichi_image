@@ -146,7 +146,7 @@ def reinhard_func(image : ti.template(),
                     dtype:ti.template()):
   
   stats = image_statistics(image)
-  print(stats.log_min, stats.log_max, stats.log_mean, stats.gray_mean, stats.rgb_mean)
+  # print(stats.log_min, stats.log_max, stats.log_mean, stats.gray_mean, stats.rgb_mean)
 
   key = (stats.log_max - stats.log_mean) / (stats.log_max - stats.log_min)
   map_key = 0.3 + 0.7 * tm.pow(key, 1.4)
