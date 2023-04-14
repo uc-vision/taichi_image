@@ -34,16 +34,15 @@ def min_max_kernel(dtype=ti.f32):
   
   return k
 
-@cache
-def scale_offset_kernel(dtype=ti.f32):
-  vec_type=ti.types.vector(3, dtype)
+@ti.kernel 
+def rescale_kernel(image: ti.types.ndarray(ndim=3), min:ti.f32, max:ti.f32):
+  range = max - min
 
-  @ti.kernel 
-  def k(image: ti.types.ndarray(vec_type, ndim=2), scale: ti.f32, offset: ti.f32):
-    for i in ti.grouped(ti.ndrange(*image.shape)):
-      image[i] = ti.cast((image[i] + offset) * scale, dtype)
+  for i in ti.grouped(ti.ndrange(*image.shape)):
+    image[i] = (image[i] - min) / range
 
-  return k
+
+
 
 
 def min_max(image):
@@ -51,12 +50,12 @@ def min_max(image):
   return min_max_kernel(dtype)(image)
 
 @ti.func
-def linear_func(image: ti.template(), output:ti.template(), gamma:ti.f32, scale_factor:ti.f32, dtype):
-    min, max = min_max_func(image)
+def linear_func(image: ti.template(), output:ti.template(), min:ti.f32, max:ti.f32, gamma:ti.f32, scale_factor:ti.f32, dtype):
     range = max - min
 
     for i in ti.grouped(ti.ndrange(*image.shape)):
-      output[i] = ti.cast(tm.pow((image[i] - min) / range, 1/gamma) * scale_factor, dtype)
+      x = tm.pow((image[i] - min) / range, 1/gamma)
+      output[i] = ti.cast(tm.clamp(x, 0, 1) * scale_factor, dtype)
 
 
 @ti.func
@@ -69,7 +68,21 @@ def normalise_range(image: ti.template(), dest: ti.template()):
 
 @ti.kernel
 def linear_kernel(src: ti.types.ndarray(ndim=3), dest: ti.types.ndarray(ndim=3), gamma:ti.f32, scale_factor:ti.f32):
-    linear_func(src, dest, gamma, scale_factor, dest.dtype)
+    min, max = min_max_func(src)
+    linear_func(src, dest, min, max, gamma, scale_factor, dest.dtype)
+
+@cache
+def linear_kernel_for(in_dtype=ti.f32, out_dtype=ti.f32):
+  in_vec =ti.types.vector(3, in_dtype)
+  out_vec =ti.types.vector(3, out_dtype)
+
+  @ti.kernel
+  def k(src: ti.types.ndarray(in_vec, ndim=2), dest: ti.types.ndarray(out_vec, ndim=2), min:ti.f32, max:ti.f32, gamma:ti.f32, scale_factor:ti.f32):
+    linear_func(src, dest, min, max, gamma, scale_factor, out_dtype)
+  
+  return k
+
+
 
 
 def tonemap_linear(src, gamma=1.0, dtype=None, scale_factor=1.0):
@@ -133,6 +146,7 @@ def reinhard_func(image : ti.template(),
                     dtype:ti.template()):
   
   stats = image_statistics(image)
+  print(stats.log_min, stats.log_max, stats.log_mean, stats.gray_mean, stats.rgb_mean)
 
   key = (stats.log_max - stats.log_mean) / (stats.log_max - stats.log_min)
   map_key = 0.3 + 0.7 * tm.pow(key, 1.4)
@@ -165,7 +179,8 @@ def reinhard_kernel(in_dtype=ti.f32, out_dtype=ti.f32):
     reinhard_func(image, intensity, light_adapt, color_adapt, in_dtype)
 
     # Gamma correction
-    linear_func(image, dest, gamma, types.scale_factor[out_dtype], out_dtype)
+    min, max = min_max_func(image)
+    linear_func(image, dest, min, max, gamma, types.scale_factor[out_dtype], out_dtype)
 
   return kernel
 
