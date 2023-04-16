@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from taichi_image.util import cache
 from typing import Tuple
 import numpy as np
@@ -29,20 +30,17 @@ def min_max_kernel(dtype=ti.f32):
   vec_type=ti.types.vector(3, dtype)
 
   @ti.kernel
-  def k(image: ti.types.ndarray(vec_type, ndim=2)) -> ti.types.vector(2, ti.f32):
+  def k(image: ti.types.ndarray(vec_type, ndim=2))  -> tm.vec2:
     return min_max_func(image)
   
   return k
 
 @ti.kernel 
-def rescale_kernel(image: ti.types.ndarray(ndim=3), min:ti.f32, max:ti.f32):
-  range = max - min
+def rescale_kernel(image: ti.types.ndarray(ndim=3), bounds:tm.vec2):
+  range = bounds[1] - bounds[0]
 
   for i in ti.grouped(ti.ndrange(*image.shape)):
-    image[i] = (image[i] - min) / range
-
-
-
+    image[i] = (image[i] - bounds[0]) / range
 
 
 def min_max(image):
@@ -83,14 +81,10 @@ def linear_kernel_for(in_dtype=ti.f32, out_dtype=ti.f32):
   return k
 
 
-
-
 def tonemap_linear(src, gamma=1.0, dtype=None, scale_factor=1.0):
   output = types.empty_like(src, src.shape, dtype or types.ti_type[src])
   linear_kernel(src, output, gamma, scale_factor)
   return output
-
-
 
 
 @ti.func
@@ -103,25 +97,47 @@ def bgr_gray(bgr) -> ti.f32:
   # 0.114⋅B+0.587⋅G+0.299⋅R
   return tm.dot(bgr, tm.vec3(0.114, 0.587, 0.299))
 
+def rgb_linear(rgb):
+  return ti.select(rgb <= 0.04045, 
+     rgb / 12.92,
+    tm.pow((rgb + 0.055) / 1.055, 2.4))
+
+@ti.func
+def rgb_ciexyz(rgb:tm.vec3):
+  linear = rgb_linear(rgb)
+  m = tm.mat3x3(
+    0.4124564, 0.3575761, 0.1804375,
+    0.2126729, 0.7151522, 0.0721750,
+    0.0193339, 0.1191920, 0.9503041
+  )
+  return m @ linear
+
+
+
 @ti.dataclass
-class ImageStatistics:
+class ReinhardStats:
   log_min: ti.f32
   log_max: ti.f32
   log_mean: ti.f32
   gray_mean: ti.f32
   rgb_mean: tm.vec3
 
+
+
 @ti.func
-def image_statistics(image: ti.template()) -> ImageStatistics:
+def metering_func(image: ti.template(), bounds_min:ti.f32, bounds_max:ti.f32) -> ReinhardStats:
   total_log_gray = 0.0
   total_gray = 0.0
   total_rgb = tm.vec3(0.0)
   
   log_min = ti.f32(np.inf)
   log_max = ti.f32(np.inf)
+  bounds_range = bounds_max - bounds_min
 
   for i, j in ti.ndrange(image.shape[0], image.shape[1]):
-    gray = ti.f32(rgb_gray(image[i, j]))
+    scaled = (image[i, j] - bounds_min) / bounds_range 
+
+    gray = ti.f32(rgb_gray(scaled))
     log_gray = tm.log(tm.max(gray, 1e-4))
 
     # To side-step a bug use negative atomic_min instead of atomic_max
@@ -133,20 +149,20 @@ def image_statistics(image: ti.template()) -> ImageStatistics:
     total_rgb += image[i, j]
 
   n = (image.shape[0] * image.shape[1])
-  return ImageStatistics(log_min, -log_max, 
+  return ReinhardStats(log_min, -log_max, 
                         total_log_gray / n, total_gray / n, total_rgb / n)
+
 
 
 
 @ti.func
 def reinhard_func(image : ti.template(),
+                  stats : ReinhardStats,
                     intensity:ti.f32, 
                     light_adapt:ti.f32, 
                     color_adapt:ti.f32,
                     dtype:ti.template()):
   
-  stats = image_statistics(image)
-  # print(stats.log_min, stats.log_max, stats.log_mean, stats.gray_mean, stats.rgb_mean)
 
   key = (stats.log_max - stats.log_mean) / (stats.log_max - stats.log_min)
   map_key = 0.3 + 0.7 * tm.pow(key, 1.4)
@@ -169,28 +185,40 @@ def reinhard_func(image : ti.template(),
 def reinhard_kernel(in_dtype=ti.f32, out_dtype=ti.f32):
 
   @ti.kernel
-  def kernel(image: ti.types.ndarray(dtype=ti.types.vector(3, in_dtype), ndim=2), 
-             dest: ti.types.ndarray(dtype=ti.types.vector(3, out_dtype), ndim=2), 
+  def k(image: ti.types.ndarray(dtype=ti.types.vector(3, in_dtype), ndim=2), 
+             dest: ti.types.ndarray(dtype=ti.types.vector(3, out_dtype), ndim=2),
                       gamma:ti.f32, 
                       intensity:ti.f32, 
                       light_adapt:ti.f32, 
                       color_adapt:ti.f32):
     
-    reinhard_func(image, intensity, light_adapt, color_adapt, in_dtype)
+    stats = metering_func(image, bounds_min, bounds_max)
+
+    reinhard_func(image, stats, intensity, light_adapt, color_adapt, in_dtype)
 
     # Gamma correction
     min, max = min_max_func(image)
-    linear_func(image, dest, min, max, gamma, types.scale_factor[out_dtype], out_dtype)
 
-  return kernel
+    linear_func(image, dest, min, max, gamma, types.scale_factor[out_dtype], out_dtype)
+  return k
+
+
+
 
 def tonemap_reinhard(src, gamma=1.0, intensity=1.0, light_adapt=1.0, color_adapt=0.0, dtype=ti.uint8):
 
   output = types.empty_like(src, src.shape, dtype)
   temp = types.empty_like(src, src.shape, ti.f32)
 
-  kernel = reinhard_kernel(types.ti_type(src), dtype)
 
-  linear_kernel(src, temp, gamma=1.0)
-  kernel(src, temp, output, gamma, intensity, light_adapt, color_adapt)
+  tonemap_kernel = reinhard_kernel(types.ti_type(src), dtype)
+  metering = metering_kernel(dtype)
+  min_max = min_max_kernel(dtype)
+
+  bounds_min, bounds_max = min_max(src)
+  stats = metering(temp, bounds_min, bounds_max)
+
+  rescale_kernel(src, temp, bounds_min, bounds_max)
+  tonemap_kernel(src, temp, stats, output, 
+                gamma, intensity, light_adapt, color_adapt)
   return output
