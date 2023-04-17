@@ -1,6 +1,7 @@
 
 
 
+from taichi_image.test.bayer import display_rgb
 from test.arguments import init_with_args
 import numpy as np
 import cv2
@@ -21,15 +22,16 @@ def main():
 
   pattern = bayer.BayerPattern.RGGB
   test_images = [ bayer.rgb_to_bayer((test_image * x * 65536.0).astype(np.uint16), pattern=pattern) for x in [0.8, 1.0, 1.2]]
-  
   image_sizes = [(x.shape[1], x.shape[0]) for x in test_images]
 
   CameraISP = camera_isp.camera_isp(ti.f32)
   #  image_sizes:List[Tuple[int, int]], bayer_pattern:bayer.BayerPattern, resize_to:Optional[Tuple[int, int]]=None):
 
-  isp = CameraISP(image_sizes, pattern)
-  isp.load16u(test_images)
+  isp = CameraISP(image_sizes, pattern, scale=0.5)
+  outputs = isp.process_16u(test_images)
 
+
+  display_rgb("test", outputs[0])
 
 
 if __name__ == '__main__':

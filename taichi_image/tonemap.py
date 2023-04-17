@@ -13,7 +13,7 @@ def lerp(t, a, b):
   return a + t * (b - a)
 
 @ti.func 
-def bounds_func(image: ti.template()) -> Tuple[float, float]:
+def bounds_func(image: ti.template()) -> tm.vec2:
     min = np.inf
     max = -np.inf
 
@@ -22,7 +22,7 @@ def bounds_func(image: ti.template()) -> Tuple[float, float]:
         ti.atomic_min(min, ti.cast(image[i][k], ti.f32))
         ti.atomic_max(max, ti.cast(image[i][k], ti.f32))
 
-    return min, max
+    return tm.vec2(min, max)
 
 
 @ti.func
@@ -30,7 +30,7 @@ def linear_func(image: ti.template(), output:ti.template(), bounds:tm.vec2, gamm
     range = bounds[1] - bounds[0]
 
     for i in ti.grouped(ti.ndrange(*image.shape)):
-      x = tm.pow((image[i] - min) / range, 1/gamma)
+      x = tm.pow((image[i] - bounds[0]) / range, 1/gamma)
       output[i] = ti.cast(tm.clamp(x, 0, 1) * scale_factor, dtype)
 
 
