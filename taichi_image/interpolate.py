@@ -23,8 +23,16 @@ def sample_bilinear(src: ti.template(), p: tm.vec2):
               frac.x)
   return tm.mix(y1, y2, frac.y)
 
+
+@ti.func
+def bilinear_func(src: ti.template(), dst: ti.template(), scale: tm.vec2, intensity_scale: ti.f32, out_dtype):
+  for I in ti.grouped(dst):
+    p = ti.cast(I, ti.f32) / scale
+    dst[I] = ti.cast(sample_bilinear(src, p) * intensity_scale, out_dtype)
+
+
+
 @cache    
-@typechecked
 def bilinear_kernel(in_dtype=ti.u8, out_dtype=None):
   if out_dtype is None:
     out_dtype = in_dtype
@@ -32,19 +40,13 @@ def bilinear_kernel(in_dtype=ti.u8, out_dtype=None):
   in_vec3 = ti.types.vector(3, out_dtype)
   out_vec3 = ti.types.vector(3, out_dtype)
 
-
   intensity_scale = types.scale_factor[out_dtype] / types.scale_factor[in_dtype]
 
   @ti.kernel
   def f(src: ti.types.ndarray(dtype=in_vec3, ndim=2), 
         dst: ti.types.ndarray(dtype=out_vec3, ndim=2),
         scale: tm.vec2):
-    
-
-    for I in ti.grouped(dst):
-      p = ti.cast(I, ti.f32) / scale
-      dst[I] = ti.cast(sample_bilinear(src, p) * intensity_scale, out_dtype)
-
+    bilinear_func(src, dst, scale, intensity_scale, out_dtype)    
   return f
 
 def resize_bilinear(src, size, scale=None, dtype=None):
