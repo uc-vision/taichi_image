@@ -12,8 +12,25 @@ from taichi_image import types
 def lerp(t, a, b):
   return a + t * (b - a)
 
+def bounds_from_vec(v):
+  return Bounds(v[0], v[1])
+
+@ti.dataclass
+class Bounds:
+  min: ti.f32
+  max: ti.f32
+
+  @ti.func
+  def union(self, other):
+    self.min=ti.min(self.min, other.min)
+    self.max=ti.max(self.max, other.max)
+
+  @ti.func
+  def to_vec(self):
+    return tm.vec2(self.min, self.max)
+  
 @ti.func 
-def bounds_func(image: ti.template()) -> tm.vec2:
+def bounds_func(image: ti.template()) -> Bounds:
     min = np.inf
     max = -np.inf
 
@@ -22,15 +39,15 @@ def bounds_func(image: ti.template()) -> tm.vec2:
         ti.atomic_min(min, ti.cast(image[i][k], ti.f32))
         ti.atomic_max(max, ti.cast(image[i][k], ti.f32))
 
-    return tm.vec2(min, max)
+    return Bounds(min, max)
 
 
 @ti.func
-def linear_func(image: ti.template(), output:ti.template(), bounds:tm.vec2, gamma:ti.f32, scale_factor:ti.f32, dtype):
-    range = bounds[1] - bounds[0]
+def linear_func(image: ti.template(), output:ti.template(), bounds:Bounds, gamma:ti.f32, scale_factor:ti.f32, dtype):
+    inv_range = 1 / (bounds.max - bounds.min)
 
     for i in ti.grouped(ti.ndrange(*image.shape)):
-      x = tm.pow((image[i] - bounds[0]) / range, 1/gamma)
+      x = tm.pow((image[i] - bounds.min) * inv_range, 1/gamma)
       output[i] = ti.cast(tm.clamp(x, 0, 1) * scale_factor, dtype)
 
 
@@ -74,29 +91,38 @@ def rgb_ciexyz(rgb:tm.vec3):
   return m @ linear
 
 
+@ti.func
+def metering_from_vec(vec: ti.template()):
+  return Metering(Bounds(vec[0], vec[1]), vec[2], vec[3], vec[4:7])
 
 @ti.dataclass
-class ReinhardStats:
-  log_min: ti.f32
-  log_max: ti.f32
+class Metering:
+  log_bounds: Bounds
   log_mean: ti.f32
   gray_mean: ti.f32
   rgb_mean: tm.vec3
 
+  @ti.func
+  def to_vec(self):
+    return ti.Vector(self.log_bounds.min, self.log_bounds.max, 
+                   self.log_mean, self.gray_mean, *self.rgb_mean)
+
+  
+
 
 
 @ti.func
-def metering_func(image: ti.template(), bounds:tm.vec2) -> ReinhardStats:
+def metering_func(image: ti.template(), bounds:Bounds) -> Metering:
   total_log_gray = 0.0
   total_gray = 0.0
   total_rgb = tm.vec3(0.0)
   
   log_min = ti.f32(np.inf)
   log_max = ti.f32(np.inf)
-  bounds_range = bounds[1] - bounds[0]
+  bounds_range = bounds.max - bounds.min
 
   for i, j in ti.ndrange(image.shape[0], image.shape[1]):
-    scaled = (image[i, j] - bounds[0]) / bounds_range 
+    scaled = (image[i, j] - bounds.min) / bounds_range 
 
     gray = ti.f32(rgb_gray(scaled))
     log_gray = tm.log(tm.max(gray, 1e-4))
@@ -110,13 +136,13 @@ def metering_func(image: ti.template(), bounds:tm.vec2) -> ReinhardStats:
     total_rgb += image[i, j]
 
   n = (image.shape[0] * image.shape[1])
-  return ReinhardStats(log_min, -log_max, 
+  return Metering(Bounds(log_min, -log_max), 
                         total_log_gray / n, total_gray / n, total_rgb / n)
 
 
 @ti.func
 def reinhard_func(image : ti.template(),
-                  stats : ReinhardStats,
+                  stats : Metering,
                     intensity:ti.f32, 
                     light_adapt:ti.f32, 
                     color_adapt:ti.f32,
