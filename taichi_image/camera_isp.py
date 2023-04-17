@@ -28,7 +28,8 @@ def camera_isp(dtype=ti.f32):
   @ti.data_oriented
   class ISP():
     def __init__(self, image_sizes:List[Tuple[int, int]], 
-                 bayer_pattern:bayer.BayerPattern, scale:float=1.0):
+                 bayer_pattern:bayer.BayerPattern, scale:float=1.0, 
+                 moving_alpha=0.1):
       
       self.image_sizes = image_sizes
       self.num_images = len(image_sizes)
@@ -46,8 +47,8 @@ def camera_isp(dtype=ti.f32):
         self.output_sizes = image_sizes
         self.buffer = self.input_rgb
 
-      self.gamma = 1.0
-      self.moving_alpha = 0.1
+      self.moving_alpha = ti.field(ti.f32, shape=())
+      self.moving_alpha[None] = moving_alpha
 
       self.running_bounds = ti.field(tonemap.Bounds, shape=(1,))
       self.running_meter = ti.field(tonemap.Metering, shape=(1,))
@@ -56,24 +57,28 @@ def camera_isp(dtype=ti.f32):
     def process_16u(self, images):
       for image, cfa in zip(images, self.input_cfa):
         load_u16(image, cfa)
-      return self._process_inputs(self._outputs_like(images))
+      self.process_images_kernel()
+
 
     def process_packed12(self, images):
       for i, image in enumerate(images):
         decode12(image, self.input_cfa[i])
-      return self._process_inputs(self._outputs_like(images))
-    
-    def _outputs_like(self, images):
+      self.process_images_kernel()
 
+    
+    def outputs_like(self, images):
       return [empty_like(image, shape=(size[1], size[0], 3), dtype=ti.u8) 
               for image, size in zip(images, self.output_sizes)]
 
-    def _process_inputs(self, outputs):
-      self.process_images_kernel()
-
+    def tonemap_linear(self, outputs, gamma):
       for output, buffer in zip(outputs, self.buffer):
-        self.tonemap_kernel(buffer, output)
+        self.tonemap_linear_kernel(buffer, output, gamma)
 
+      return outputs
+    
+    def tonemap_reinhard(self, outputs, gamma):
+      for output, buffer in zip(outputs, self.buffer):
+        self.tonemap_reinhard_kernel(buffer, output, gamma)
 
       return outputs
 
@@ -89,8 +94,9 @@ def camera_isp(dtype=ti.f32):
 
         total_bounds.union(tonemap.bounds_func(buffer))
 
+      t = self.moving_alpha[None]
       self.running_bounds[None] = tonemap.bounds_from_vec(
-        lerp(self.moving_alpha, self.running_bounds[None].to_vec(), total_bounds))
+        lerp(t, self.running_bounds[None].to_vec(), total_bounds))
 
       meter_total = vec7(0.0)
       for image in ti.static(self.buffer):
@@ -98,15 +104,16 @@ def camera_isp(dtype=ti.f32):
         meter_total += m.to_vec()
 
       self.running_meter[None] = tonemap.metering_from_vec(
-        lerp(self.moving_alpha, self.running_meter[None].to_vec(), meter_total / self.num_images))
+        lerp(t, self.running_meter[None].to_vec(), meter_total / self.num_images))
 
 
 
     @ti.kernel
     def tonemap_linear_kernel(self, buffer:ti.template(), 
-                       output: ti.types.ndarray(ti.types.vector(3, ti.u8), ndim=2)):
+                       output: ti.types.ndarray(ti.types.vector(3, ti.u8), ndim=2),
+                       gamma:ti.f32):
       tonemap.linear_func(buffer, output, self.running_bounds[None],
-                          self.gamma, scale_factor=255, dtype=ti.u8)
+                          gamma, scale_factor=255, dtype=ti.u8)
       
     @ti.kernel
     def tonemap_reinhard_kernel(self, buffer:ti.template(), 
