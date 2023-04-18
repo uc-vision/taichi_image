@@ -21,14 +21,18 @@ def main():
     test_image = test_image.astype(np.float32) / 65535
 
   pattern = bayer.BayerPattern.RGGB
-  test_images = [ bayer.rgb_to_bayer((test_image * x * 65536.0).astype(np.uint16), pattern=pattern) for x in [0.8, 1.0, 1.2]]
+  test_images = [ bayer.rgb_to_bayer( (np.clip(test_image * x, 0, 1) * 65535.0).astype(np.uint16), pattern=pattern) for x in [0.2, 0.4, 0.8]]
   image_sizes = [(x.shape[1], x.shape[0]) for x in test_images]
 
   CameraISP = camera_isp.camera_isp(ti.f32)
   #  image_sizes:List[Tuple[int, int]], bayer_pattern:bayer.BayerPattern, resize_to:Optional[Tuple[int, int]]=None):
 
-  isp = CameraISP(image_sizes, pattern, scale=0.5)
-  outputs = isp.process_16u(test_images)
+  isp = CameraISP(image_sizes, pattern, moving_alpha=1.0, resize_width=512)
+  isp.load_16u(test_images)
+
+  outputs = isp.outputs_like(test_images)
+  isp.tonemap_reinhard(outputs, gamma=0.6, color_adapt=0.0, light_adapt=0.0)
+  # isp.tonemap_linear(outputs, gamma=0.6)
 
 
   display_rgb("test", outputs[0])
