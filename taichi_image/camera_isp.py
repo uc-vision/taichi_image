@@ -38,6 +38,7 @@ def camera_isp(dtype=ti.f32):
       
       self.image_size = image_size
       self.num_images = num_images
+      w, h = image_size
       
       self.bayer_to_rgb = bayer.bayer_to_rgb_func(bayer_pattern, dtype)
 
@@ -50,14 +51,13 @@ def camera_isp(dtype=ti.f32):
 
         self.scale = scale
         self.output_size = (round(w * scale), round(h * scale))
-        self.buffer = [ti.field(rgb_dtype, shape=(output_size[1], output_size[0])) for _ in range(num_images)]
+        self.buffer = [ti.field(rgb_dtype, shape=(self.output_size[1], self.output_size[0])) for _ in range(num_images)]
 
       elif resize_width > 0:
 
         self.scale = resize_width / image_size[0] 
         self.output_size = (resize_width, round(h * self.scale))
-
-        self.buffer = [ti.field(rgb_dtype, shape=(output_size[1], output_size[0])) for _ in range(num_images)]
+        self.buffer = [ti.field(rgb_dtype, shape=(self.output_size[1], self.output_size[0])) for _ in range(num_images)]
 
       else:
 
@@ -92,7 +92,9 @@ def camera_isp(dtype=ti.f32):
 
     def load_packed12(self, images):
       for i, image in enumerate(images):
+        print(image.shape)
         decode12(image, self.input_cfa[i])
+
       self._process_images_kernel()
 
     

@@ -1,6 +1,7 @@
 from typing import Callable, Dict, List
 import torch
 import time
+from tqdm import tqdm
 
 from typeguard import typechecked
 
@@ -31,8 +32,12 @@ def benchmark(name,  func:Callable, args:List=None, kwargs:Dict=None, iterations
   args = args or []
   kwargs = kwargs or {}
   
+  print(f"Warming up {name} for {warmup} iterations...")
+
   for i in range(warmup):
     func(*args, **kwargs)
+  
+  print(f"Running {name} for {iterations} iterations...")
 
   with Benchmark(name, iterations) as b:
     for i in range(b.iterations):
