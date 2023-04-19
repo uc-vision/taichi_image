@@ -1,5 +1,5 @@
 from taichi_image.util import cache
-from typing import Tuple
+from typing import List, Tuple
 import numpy as np
 
 import math
@@ -44,7 +44,23 @@ def bounds_func(image: ti.template()) -> Bounds:
         ti.atomic_min(min, ti.cast(image[i][k], ti.f32))
         ti.atomic_max(max, ti.cast(image[i][k], ti.f32))
 
+
     return Bounds(min, max)
+
+
+def union_bounds(bounds:List[Bounds]):
+  result = Bounds(np.inf, -np.inf)
+  for b in bounds:
+    result.min = min(result.min, b.min)
+    result.max = max(result.max, b.max)
+
+  return result
+
+def bounds_to_np(b:Bounds):
+  return np.array([b.min, b.max])
+
+def bounds_from_np(b:np.ndarray):
+  return Bounds(b[0], b[1])
 
 
 @ti.func
@@ -61,6 +77,11 @@ def rescale_func(image: ti.template(), bounds:Bounds, dtype):
     for i in ti.grouped(ti.ndrange(*image.shape)):
       image[i] = ti.cast((image[i] - bounds.min) * inv_range, dtype)
 
+@ti.kernel 
+def rescale_kernel(image: ti.types.ndarray(ndim=3), bounds:Bounds, dtype:ti.i32):
+  rescale_func(image, bounds, dtype)
+
+
 @ti.func
 def gamma_func(image: ti.template(), output:ti.template(), gamma:ti.f32, scale_factor:ti.f32, dtype):
 
@@ -69,8 +90,9 @@ def gamma_func(image: ti.template(), output:ti.template(), gamma:ti.f32, scale_f
       output[i] = ti.cast(tm.clamp(x, 0, 1) * scale_factor, dtype)      
 
 @ti.kernel
-def linear_kernel(src: ti.types.ndarray(ndim=3), dest: ti.types.ndarray(ndim=3), gamma:ti.f32, scale_factor:ti.f32):
-    linear_func(src, dest, bounds_func(src), gamma, scale_factor, dest.dtype)
+def linear_kernel(src: ti.types.ndarray(ndim=3), dest: ti.types.ndarray(ndim=3), 
+                  gamma:ti.f32, scale_factor:ti.f32, dtype:ti.template()):
+    linear_func(src, dest, bounds_func(src), gamma, scale_factor, dtype)
 
 
 
@@ -125,11 +147,19 @@ class Metering:
                    self.log_mean, self.gray_mean, *self.rgb_mean)
 
   
+def metering_to_np(x:Metering):
+  return np.array([x.log_bounds.min, x.log_bounds.max, 
+                   x.log_mean, x.gray_mean, *x.rgb_mean])
+
+def metering_from_np(x:np.ndarray):
+  return Metering(Bounds(x[0], x[1]), x[2], x[3], 
+                  tm.vec3(x[4], x[5], x[6]))
+
 
 
 
 @ti.func
-def metering_func(image: ti.template()) -> Metering:
+def metering_func(image: ti.template(), bounds:Bounds) -> Metering:
   total_log_gray = 0.0
   total_gray = 0.0
   total_rgb = tm.vec3(0.0)
@@ -138,7 +168,9 @@ def metering_func(image: ti.template()) -> Metering:
   log_max = ti.f32(np.inf)
 
   for i, j in ti.ndrange(image.shape[0], image.shape[1]):
-    gray = ti.f32(rgb_gray(image[i, j]))
+    scaled = (image[i, j] - bounds.min) / (bounds.max - bounds.min)
+
+    gray = ti.f32(rgb_gray(scaled))
     log_gray = tm.log(tm.max(gray, 1e-4))
 
     # To side-step a bug use negative atomic_min instead of atomic_max
@@ -154,8 +186,13 @@ def metering_func(image: ti.template()) -> Metering:
                         total_log_gray / n, total_gray / n, total_rgb / n)
 
 
+@ti.kernel 
+def metering_kernel(image: ti.types.ndarray(ndim=2)) -> Metering:
+  return metering_func(image)
+
 @ti.func
 def reinhard_func(image : ti.template(),
+                  bounds : Bounds,
                   stats : Metering,
                     intensity:ti.f32, 
                     light_adapt:ti.f32, 
@@ -168,16 +205,17 @@ def reinhard_func(image : ti.template(),
 
   mean = lerp(color_adapt, stats.gray_mean, stats.rgb_mean)
   for i, j in ti.ndrange(image.shape[0], image.shape[1]):
-    gray = rgb_gray(image[i, j])
+    scaled = (image[i, j] - bounds.min) / (bounds.max - bounds.min)
+    gray = rgb_gray(scaled)
 
     # Blend between gray value and RGB value
-    adapt_color = lerp(color_adapt, tm.vec3(gray), image[i, j])
+    adapt_color = lerp(color_adapt, tm.vec3(gray), scaled)
 
     # Blend between mean and local adaptation
     adapt_mean = lerp(light_adapt, mean, adapt_color)
     adapt = tm.pow(tm.exp(-intensity) * adapt_mean, map_key)
 
-    image[i, j] = ti.cast(image[i, j] * (1.0 / (adapt + image[i, j])), dtype) 
+    image[i, j] = ti.cast(scaled * (1.0 / (adapt + scaled)), dtype) 
 
 
 @cache
@@ -190,10 +228,12 @@ def reinhard_kernel(in_dtype=ti.f32, out_dtype=ti.f32):
                       intensity:ti.f32, 
                       light_adapt:ti.f32, 
                       color_adapt:ti.f32):
-    linear_func(image, dest, bounds_func(image), gamma, 1.0, out_dtype)
+    
+    bounds = bounds_func(image)
+    linear_func(image, dest, bounds, gamma, 1.0, out_dtype)
 
-    stats = metering_func(image)
-    reinhard_func(image, stats, intensity, light_adapt, color_adapt, in_dtype)
+    stats = metering_func(image, bounds)
+    reinhard_func(image, bounds, stats, intensity, light_adapt, color_adapt, in_dtype)
 
     # Gamma correction
     min, max = bounds_func(image)

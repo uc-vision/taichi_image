@@ -65,7 +65,6 @@ def encode12_kernel(in_type, scaled=False):
 def decode12_func(out_type, scaled=False):
   scale = types.scale_factor[out_type]
   
-
   @ti.func
   def write_value_scaled(arr:ti.template(), i:ti.int32, value:ti.u16):
     val_float = ti.cast(value, ti.f32) * (scale / 4095.0)
@@ -78,7 +77,7 @@ def decode12_func(out_type, scaled=False):
   write_value = write_value_scaled if scaled else write_value_direct
 
   @ti.func
-  def decode(encoded:ti.types.ndarray(ti.u8, ndim=1), out:ti.types.ndarray(out_type, ndim=1)):
+  def decode(encoded:ti.template(), out:ti.template()):
     for i_half in ti.ndrange(out.shape[0] // 2):
       i = i_half * 2
       idx = 3 * i_half
@@ -95,8 +94,8 @@ def decode12_kernel(out_type, scaled=False):
   f = decode12_func(out_type, scaled=scaled)
 
   @ti.kernel
-  def k(encoded:ti.types.ndarray(ti.u8, ndim=1), 
-        out:ti.types.ndarray(out_type, ndim=1)):
+  def k(encoded:ti.types.ndarray(ti.u8), 
+        out:ti.types.ndarray(out_type)):
     f(encoded, out)
       
   return k

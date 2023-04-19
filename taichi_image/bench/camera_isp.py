@@ -31,13 +31,11 @@ def main():
   test_images = [torch.from_numpy(x).to(device='cuda:0') for x in test_images]
                  
   CameraISP = camera_isp.camera_isp(ti.f32)
-
   isp = CameraISP(len(test_images), image_size, pattern, moving_alpha=1.0, resize_width=512)
 
   def f():
-    isp.load_16f(test_images)
-    outputs = isp.outputs_like(test_images)
-    isp.tonemap_reinhard(outputs, gamma=0.6)
+    images = [isp.load_16u(image) for image in test_images]
+    isp.tonemap_linear(images, gamma=0.6)
 
 
   benchmark("camera_isp", 

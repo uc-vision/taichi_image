@@ -5,6 +5,7 @@ from taichi_image.bayer import BayerPattern, rgb_to_bayer, bayer_to_rgb
 from taichi_image.util import cache
 
 import cv2
+import torch
 
 from taichi_image.test.arguments import init_with_args
 
@@ -26,6 +27,10 @@ def make_bayer_images(rgb_image):
   
   
 def display_rgb(k, rgb_image):
+  if isinstance(rgb_image, torch.Tensor):
+    rgb_image = rgb_image.cpu().numpy()
+    
+
   cv2.imshow(k, cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR))
   cv2.waitKey(0)
 
