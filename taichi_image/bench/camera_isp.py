@@ -8,8 +8,10 @@ from test.arguments import init_with_args
 import numpy as np
 import cv2
 
-from taichi_image import bayer, camera_isp
+from taichi_image import bayer, camera_isp, packed
 import taichi as ti
+
+from concurrent.futures import ThreadPoolExecutor
 
 
 
@@ -25,17 +27,22 @@ def main():
     test_image = test_image.astype(np.float32) / 65535
 
   pattern = bayer.BayerPattern.RGGB
-  test_images = [ bayer.rgb_to_bayer( (np.clip(test_image * x, 0, 1)).astype(np.float16), pattern=pattern) for x in [0.2, 0.4, 0.8]]
-  image_size = (test_image.shape[1], test_image.shape[0]) 
+  num_cameras = 6
+  test_images = [ bayer.rgb_to_bayer( (np.clip(test_image, 0, 1)).astype(np.uint16), pattern=pattern) 
+                 for _ in range(num_cameras)]
+
+  test_images = [packed.encode12(x.reshape(-1)) for x in test_images]
+  h, w, _ = test_image.shape
 
   test_images = [torch.from_numpy(x).to(device='cuda:0') for x in test_images]
                  
-  CameraISP = camera_isp.camera_isp(ti.f32)
-  isp = CameraISP(len(test_images), image_size, pattern, moving_alpha=1.0, resize_width=512)
+  CameraISP = camera_isp.camera_isp(ti.f16)
+  isp = CameraISP(pattern, moving_alpha=0.1, resize_width=2560)
+
 
   def f():
-    images = [isp.load_16u(image) for image in test_images]
-    isp.tonemap_linear(images, gamma=0.6)
+    images = [isp.load_packed12(image, image_size=(w, h)) for image in test_images]
+    isp.tonemap_reinhard(images, gamma=0.6)
 
 
   benchmark("camera_isp", 

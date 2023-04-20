@@ -41,8 +41,8 @@ def camera_isp(dtype=ti.f32, device:torch.device = torch.device('cuda:0')):
   @ti.kernel
   def linear_kernel(image: ti.types.ndarray(dtype=ti.types.vector(3, ti.u8), ndim=2),
                     output:ti.types.ndarray(dtype=vec_dtype, ndim=2),
-                    bounds:tonemap.Bounds, gamma:ti.f32):
-    tonemap.linear_func(image, output, bounds, gamma, 255, ti.u8)
+                    bounds:tm.vec2, gamma:ti.f32):
+    tonemap.linear_func(image, output,tonemap.bounds_from_vec(bounds), gamma, 255, ti.u8)
 
   @ti.kernel
   def reinhard_kernel(image: ti.types.ndarray(dtype=vec_dtype, ndim=2),
@@ -137,7 +137,7 @@ def camera_isp(dtype=ti.f32, device:torch.device = torch.device('cuda:0')):
       self.moving_bounds = self.updated_bounds(images)
 
       for image, output in zip(images, outputs):
-        linear_kernel(image, output, self.moving_bounds, gamma)
+        linear_kernel(image, output, tm.vec2(*self.moving_bounds), gamma)
       
       return outputs
     
