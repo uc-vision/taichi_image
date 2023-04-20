@@ -182,13 +182,12 @@ def metering_func(image: ti.template(), bounds:Bounds) -> Metering:
     total_rgb += image[i, j]
 
   n = (image.shape[0] * image.shape[1])
+  mean_rgb = total_rgb / n
+
   return Metering(Bounds(log_min, -log_max), 
-                        total_log_gray / n, total_gray / n, total_rgb / n)
+                        total_log_gray / n, total_gray / n, mean_rgb)
 
 
-@ti.kernel 
-def metering_kernel(image: ti.types.ndarray(ndim=2)) -> Metering:
-  return metering_func(image)
 
 @ti.func
 def reinhard_func(image : ti.template(),
