@@ -6,6 +6,7 @@ import torch
 
 from . import tonemap, interpolate, bayer, packed
 import numpy as np
+from py_structs.torch import shape_info
 
 def moving_average(old, new, alpha):
   if old is None:
@@ -100,21 +101,17 @@ def camera_isp(dtype=ti.f32, device:torch.device = torch.device('cuda:0')):
     def load_16u(self, image):
       cfa = torch.empty(image.shape, dtype=torch_dtype, device=device)
       load_u16(image, cfa)
-      return self._process_image(cfa)
+      return cfa
 
     def load_16f(self, image):
       cfa = torch.empty(image.shape, dtype=torch_dtype, device=device)
       load_16f(image, cfa)
-      return self._process_image(cfa)
+      return cfa
 
     def load_packed12(self, image_data, image_size):
-      cfa = torch.empty(image_size[1], image_size[0], dtype=torch_dtype, device=device)
+      cfa = torch.empty(image_size[1], image_size[0], dtype=torch_dtype, device=device)    
       decode12_kernel(image_data, cfa.view(-1))
-      return self._process_image(cfa)
-
-    def _process_image(self, cfa):
-      rgb = bayer.bayer_to_rgb(cfa)
-      return self.resize_image(rgb)
+      return cfa
 
     def updated_bounds(self, images):
       bounds = tonemap.union_bounds([bounds_kernel(image) for image in images])
@@ -131,7 +128,12 @@ def camera_isp(dtype=ti.f32, device:torch.device = torch.device('cuda:0')):
       return self.moving_metrics
         
 
+    def _process_input(self, cfa):
+      rgb = bayer.bayer_to_rgb(cfa)
+      return self.resize_image(rgb)
+
     def tonemap_linear(self, images, gamma=1.0):
+      images = [self._process_input(image) for image in images]
 
       outputs = [torch.empty_like(image, dtype=torch.uint8, device=device) for image in images]
       self.moving_bounds = self.updated_bounds(images)
@@ -142,11 +144,12 @@ def camera_isp(dtype=ti.f32, device:torch.device = torch.device('cuda:0')):
       return outputs
     
     def tonemap_reinhard(self, images, gamma=1.0, intensity=1.0, light_adapt=1.0, color_adapt=0.0):
-      outputs = [torch.empty_like(image, dtype=torch.uint8, device=device) for image in images]
+      images = [self._process_input(image) for image in images]
 
       self.moving_bounds = self.updated_bounds(images)
       self.moving_metrics = self.updated_metrics(images)
 
+      outputs = [torch.empty_like(image, dtype=torch.uint8, device=device) for image in images]
       for image, output in zip(images, outputs):
         reinhard_kernel(image, output, tm.vec2(*self.moving_bounds), vec7(*self.moving_metrics), 
                         gamma, intensity, light_adapt, color_adapt)
