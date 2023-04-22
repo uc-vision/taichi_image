@@ -15,8 +15,13 @@ def moving_average(old, new, alpha):
   return alpha * old + (1 - alpha) * new
 
 
-def camera_isp(dtype=ti.f32, device:torch.device = torch.device('cuda:0')):
-  decode12_kernel = packed.decode12_kernel(dtype)
+
+
+
+def camera_isp(name:str, dtype=ti.f32):
+  decode12_kernel = packed.decode12_kernel(dtype, scaled=True)
+  decode16_kernel = packed.decode16_kernel(dtype, scaled=True)
+
   torch_dtype = ti_to_torch[dtype]
   vec_dtype = ti.types.vector(3, dtype)
   vec7 = ti.types.vector(7, ti.f32)
@@ -45,14 +50,21 @@ def camera_isp(dtype=ti.f32, device:torch.device = torch.device('cuda:0')):
                     bounds:tm.vec2, gamma:ti.f32):
     tonemap.linear_func(image, output,tonemap.bounds_from_vec(bounds), gamma, 255, ti.u8)
 
+  # @ti.kernel
+  # def reinhard_kernel(image: ti.types.ndarray(dtype=vec_dtype, ndim=2),
+  #                     output:ti.types.ndarray(dtype=ti.types.vector(3, ti.u8), ndim=2),
+  #                     bounds:tm.vec2,
+  #                     metrics:vec7,
+  #                     gamma:ti.f32, intensity:ti.f32,
+  #                     light_adapt:ti.f32, color_adapt:ti.f32):
+    
   @ti.kernel
   def reinhard_kernel(image: ti.types.ndarray(dtype=vec_dtype, ndim=2),
                       output:ti.types.ndarray(dtype=ti.types.vector(3, ti.u8), ndim=2),
                       bounds:tm.vec2,
                       metrics:vec7,
-                      gamma:ti.f32, intensity:ti.f32,
-                      light_adapt:ti.f32, color_adapt:ti.f32):
-    
+                      gamma:ti.template(), intensity:ti.template(),
+                      light_adapt:ti.template(), color_adapt:ti.template()):
     tonemap.reinhard_func(image, tonemap.bounds_from_vec(bounds), tonemap.metering_from_vec(metrics), 
                           intensity, light_adapt, color_adapt, dtype)
     
@@ -69,7 +81,7 @@ def camera_isp(dtype=ti.f32, device:torch.device = torch.device('cuda:0')):
   class ISP():
     def __init__(self, bayer_pattern:bayer.BayerPattern, 
                   scale:Optional[float]=None, resize_width:int=0,
-                 moving_alpha=0.1):
+                 moving_alpha=0.1, device:torch.device = torch.device('cuda:0')):
       assert scale is None or resize_width == 0, "Cannot specify both scale and resize_width"    
   
       self.bayer_pattern = bayer_pattern
@@ -79,7 +91,7 @@ def camera_isp(dtype=ti.f32, device:torch.device = torch.device('cuda:0')):
 
       self.moving_bounds = None
       self.moving_metrics = None
-
+      self.device = device
 
     def resize_image(self, image):
       w, h = image.shape[1], image.shape[0]
@@ -99,18 +111,30 @@ def camera_isp(dtype=ti.f32, device:torch.device = torch.device('cuda:0')):
 
 
     def load_16u(self, image):
-      cfa = torch.empty(image.shape, dtype=torch_dtype, device=device)
+      cfa = torch.empty(image.shape, dtype=torch_dtype, device=self.device)
       load_u16(image, cfa)
       return cfa
 
     def load_16f(self, image):
-      cfa = torch.empty(image.shape, dtype=torch_dtype, device=device)
+      cfa = torch.empty(image.shape, dtype=torch_dtype, device=self.device)
       load_16f(image, cfa)
       return cfa
 
-    def load_packed12(self, image_data, image_size):
-      cfa = torch.empty(image_size[1], image_size[0], dtype=torch_dtype, device=device)    
-      decode12_kernel(image_data, cfa.view(-1))
+    def load_packed12(self, image_data):
+      w, h = (image_data.shape[1] * 2 // 3, image_data.shape[0])
+
+      cfa = torch.empty(h, w, dtype=torch_dtype, device=self.device)    
+      decode12_kernel(image_data.view(-1), cfa.view(-1))
+
+      return cfa
+
+    def load_packed16(self, image_data):
+      w, h = (image_data.shape[1] // 2, image_data.shape[0])
+
+      cfa = torch.empty(h, w, dtype=torch_dtype, device=self.device)    
+      decode16_kernel(image_data.view(-1), cfa.view(-1))
+
+
       return cfa
 
     def updated_bounds(self, images):
@@ -129,13 +153,18 @@ def camera_isp(dtype=ti.f32, device:torch.device = torch.device('cuda:0')):
         
 
     def _process_input(self, cfa):
+      print(cfa.min(), cfa.max(), cfa.mean())
+
       rgb = bayer.bayer_to_rgb(cfa)
+
+      print(rgb.min(), rgb.max(), rgb.mean())
+
       return self.resize_image(rgb)
 
     def tonemap_linear(self, images, gamma=1.0):
       images = [self._process_input(image) for image in images]
 
-      outputs = [torch.empty_like(image, dtype=torch.uint8, device=device) for image in images]
+      outputs = [torch.empty_like(image, dtype=torch.uint8, device=self.device) for image in images]
       self.moving_bounds = self.updated_bounds(images)
 
       for image, output in zip(images, outputs):
@@ -149,15 +178,17 @@ def camera_isp(dtype=ti.f32, device:torch.device = torch.device('cuda:0')):
       self.moving_bounds = self.updated_bounds(images)
       self.moving_metrics = self.updated_metrics(images)
 
-      outputs = [torch.empty_like(image, dtype=torch.uint8, device=device) for image in images]
+      outputs = [torch.empty_like(image, dtype=torch.uint8, device=self.device) for image in images]
       for image, output in zip(images, outputs):
         reinhard_kernel(image, output, tm.vec2(*self.moving_bounds), vec7(*self.moving_metrics), 
                         gamma, intensity, light_adapt, color_adapt)
         
       return outputs
 
-          
+  ISP.__qualname__ = name
   return ISP
 
 
 
+Camera16 = camera_isp("Camera16", ti.f16)
+Camera32 = camera_isp("Camera32", ti.f32)

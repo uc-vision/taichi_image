@@ -89,9 +89,49 @@ def decode12_func(out_type, scaled=False):
 
   return decode
 
+
 @cache
 def decode12_kernel(out_type, scaled=False):
   f = decode12_func(out_type, scaled=scaled)
+
+  @ti.kernel
+  def k(encoded:ti.types.ndarray(ti.u8), 
+        out:ti.types.ndarray(out_type)):
+    f(encoded, out)
+      
+  return k
+
+
+@cache 
+def decode16_func(out_type, scaled=False):
+  scale = types.scale_factor[out_type]
+  
+  @ti.func
+  def write_value_scaled(arr:ti.template(), i:ti.int32, value:ti.u16):
+    val_float = ti.cast(value, ti.f32) * (scale / 65535.0)
+    arr[i] = ti.cast(val_float, out_type)
+
+  @ti.func
+  def write_value_direct(arr:ti.template(), i:ti.int32, value:ti.u16):
+    arr[i] = value
+
+  write_value = write_value_scaled if scaled else write_value_direct
+
+  @ti.func
+  def decode(encoded:ti.template(), out:ti.template()):
+    for i in range(out.shape[0]):
+      b1 = ti.cast(encoded[i * 2 + 1], ti.u16)
+      b2 = ti.cast(encoded[i * 2], ti.u16)
+
+      write_value(out, i, (b1 << 8) | b2)
+
+  return decode
+
+
+
+@cache
+def decode16_kernel(out_type, scaled=False):
+  f = decode16_func(out_type, scaled=scaled)
 
   @ti.kernel
   def k(encoded:ti.types.ndarray(ti.u8), 
@@ -126,6 +166,17 @@ def decode12(values, dtype=ti.u16, scaled=False):
   f(values, decoded)
   return decoded.reshape(shape[:-1] + (shape[-1] * 2 // 3,))
 
+def decode16(values, dtype=ti.u16, scaled=False):
+  shape = values.shape
+  assert types.ti_type(values) == ti.uint8
+  assert shape[-1] % 2 == 0, f"last dimension must be a factor of 2 for 16-bit decoding got: {shape}"
+  values = values.reshape(-1)
+
+  decoded = types.empty_like(values, (values.shape[0] // 2,), dtype=dtype)
+  f = decode16_kernel(dtype, scaled=scaled)
+
+  f(values, decoded)
+  return decoded.reshape(shape[:-1] + (shape[-1] // 2,))
 
 
 @ti.data_oriented

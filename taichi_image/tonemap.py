@@ -84,21 +84,31 @@ def rescale_kernel(image: ti.types.ndarray(ndim=3), bounds:Bounds, dtype:ti.i32)
 
 @ti.func
 def gamma_func(image: ti.template(), output:ti.template(), gamma:ti.f32, scale_factor:ti.f32, dtype):
-
     for i in ti.grouped(ti.ndrange(*image.shape)):
       x = tm.pow(image[i], 1/gamma)
       output[i] = ti.cast(tm.clamp(x, 0, 1) * scale_factor, dtype)      
 
-@ti.kernel
-def linear_kernel(src: ti.types.ndarray(ndim=3), dest: ti.types.ndarray(ndim=3), 
-                  gamma:ti.f32, scale_factor:ti.f32, dtype:ti.template()):
-    linear_func(src, dest, bounds_func(src), gamma, scale_factor, dtype)
+@cache
+def linear_kernel(in_dtype, out_dtype):
+  in_vec = ti.types.vector(3, in_dtype)
+  out_vec = ti.types.vector(3, out_dtype)
+
+  @ti.kernel
+  def k(src: ti.types.ndarray(in_vec, ndim=2), dest: ti.types.ndarray(out_vec, ndim=2), 
+                  gamma:ti.f32, scale_factor:ti.f32):
+    
+    bounds = bounds_func(src)
+    print("bounds", bounds.min, bounds.max)
+    linear_func(src, dest, bounds, gamma, scale_factor, out_dtype)
+
+  return k
 
 
+def tonemap_linear(src, gamma=1.0, dtype=ti.u8):
+  output = types.empty_like(src, src.shape, dtype)
+  k = linear_kernel(types.ti_type(src), dtype)
 
-def tonemap_linear(src, gamma=1.0, dtype=None, scale_factor=1.0):
-  output = types.empty_like(src, src.shape, dtype or types.ti_type[src])
-  linear_kernel(src, output, gamma, scale_factor)
+  k(src, output, gamma, types.scale_factor[dtype])
   return output
 
 
@@ -222,6 +232,7 @@ def reinhard_kernel(in_dtype=ti.f32, out_dtype=ti.f32):
 
   @ti.kernel
   def k(image: ti.types.ndarray(dtype=ti.types.vector(3, in_dtype), ndim=2), 
+        temp : ti.types.ndarray(dtype=ti.types.vector(3, ti.f32), ndim=2),
              dest: ti.types.ndarray(dtype=ti.types.vector(3, out_dtype), ndim=2),
                       gamma:ti.f32, 
                       intensity:ti.f32, 
@@ -229,14 +240,14 @@ def reinhard_kernel(in_dtype=ti.f32, out_dtype=ti.f32):
                       color_adapt:ti.f32):
     
     bounds = bounds_func(image)
-    linear_func(image, dest, bounds, gamma, 1.0, out_dtype)
+    linear_func(image, temp, bounds, gamma, 1.0, ti.f32)
 
-    stats = metering_func(image, bounds)
-    reinhard_func(image, bounds, stats, intensity, light_adapt, color_adapt, in_dtype)
+    stats = metering_func(temp, Bounds(0, 1))
+    reinhard_func(temp, Bounds(0, 1), stats, intensity, light_adapt, color_adapt, ti.f32)
 
     # Gamma correction
-    min, max = bounds_func(image)
-    linear_func(image, dest, min, max, gamma, types.scale_factor[out_dtype], out_dtype)
+    bounds2 = bounds_func(temp)
+    linear_func(temp, dest, bounds2, gamma, types.scale_factor[out_dtype], out_dtype)
   return k
 
 

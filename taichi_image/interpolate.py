@@ -63,6 +63,12 @@ def resize_bilinear(src, size, scale=None, dtype=None):
   f(src, dst, tm.vec2(scale))
   return dst
 
+def resize_width(src, width:int, dtype=None):
+  h, w = src.shape[:2]
+  scale = width / w
+  size = tm.ivec2(width, int(h * scale))
+  return resize_bilinear(src, size, scale, dtype)
+
 def scale_bilinear(src, scale, dtype=None):
 
   h, w = src.shape[:2]
