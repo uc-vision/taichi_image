@@ -18,7 +18,7 @@ def main():
   data = torch.from_numpy(data)
 
 
-  image = isp.load_packed16(data)
+  image = isp.load_packed12(data)
   rgb8 = isp.tonemap_reinhard([image], gamma=0.6)
   
   if args.show:

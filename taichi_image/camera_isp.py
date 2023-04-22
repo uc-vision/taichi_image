@@ -153,12 +153,7 @@ def camera_isp(name:str, dtype=ti.f32):
         
 
     def _process_input(self, cfa):
-      print(cfa.min(), cfa.max(), cfa.mean())
-
       rgb = bayer.bayer_to_rgb(cfa)
-
-      print(rgb.min(), rgb.max(), rgb.mean())
-
       return self.resize_image(rgb)
 
     def tonemap_linear(self, images, gamma=1.0):
