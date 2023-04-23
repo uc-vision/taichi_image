@@ -25,8 +25,6 @@ def decode12_pair(input:u8vec3) -> u16vec2:
   # 3 x 8 bits -> 2 x 12 bits (as u16)
 
   bytes = ti.cast(input, ti.u16)
-
-
   return ti.Vector([
     (bytes[1] & 0xf) << 8 | bytes[0],
     (bytes[2] << 4) | (bytes[1] >> 4),

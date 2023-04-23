@@ -19,7 +19,7 @@ def load_test_image(filename, num_cameras, pattern = bayer.BayerPattern.RGGB):
   test_images = [ bayer.rgb_to_bayer( (np.clip(test_image, 0, 1) * 65536).astype(np.uint16), pattern=pattern) 
                  for _ in range(num_cameras) ]
 
-  test_images = [packed.encode12(x.reshape(-1)) for x in test_images]
+  test_images = [packed.encode12(x) for x in test_images]
   return test_images, test_image
 
 

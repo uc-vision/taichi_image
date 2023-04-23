@@ -16,8 +16,6 @@ def moving_average(old, new, alpha):
 
 
 
-
-
 def camera_isp(name:str, dtype=ti.f32):
   decode12_kernel = packed.decode12_kernel(dtype, scaled=True)
   decode16_kernel = packed.decode16_kernel(dtype, scaled=True)
@@ -93,6 +91,19 @@ def camera_isp(name:str, dtype=ti.f32):
       self.moving_metrics = None
       self.device = device
 
+    def set(self, moving_alpha=None, resize_width=None, scale=None):
+      if moving_alpha is not None:
+        self.moving_alpha = moving_alpha
+
+      if resize_width is not None:
+        self.resize_width = resize_width
+        self.scale = None
+
+      if scale is not None:
+        self.scale = scale
+        self.resize_width = 0
+
+
     def resize_image(self, image):
       w, h = image.shape[1], image.shape[0]
       if self.scale is not None:
@@ -133,8 +144,6 @@ def camera_isp(name:str, dtype=ti.f32):
 
       cfa = torch.empty(h, w, dtype=torch_dtype, device=self.device)    
       decode16_kernel(image_data.view(-1), cfa.view(-1))
-
-
       return cfa
 
     def updated_bounds(self, images):
@@ -178,6 +187,7 @@ def camera_isp(name:str, dtype=ti.f32):
         reinhard_kernel(image, output, tm.vec2(*self.moving_bounds), vec7(*self.moving_metrics), 
                         gamma, intensity, light_adapt, color_adapt)
         
+      del images
       return outputs
 
   ISP.__qualname__ = name

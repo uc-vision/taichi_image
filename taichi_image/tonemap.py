@@ -71,16 +71,6 @@ def linear_func(image: ti.template(), output:ti.template(), bounds:Bounds, gamma
       x = tm.pow((image[i] - bounds.min) * inv_range, 1/gamma)
       output[i] = ti.cast(tm.clamp(x, 0, 1) * scale_factor, dtype)
 
-@ti.func
-def rescale_func(image: ti.template(), bounds:Bounds, dtype):
-    inv_range = 1 / (bounds.max - bounds.min)
-    for i in ti.grouped(ti.ndrange(*image.shape)):
-      image[i] = ti.cast((image[i] - bounds.min) * inv_range, dtype)
-
-@ti.kernel 
-def rescale_kernel(image: ti.types.ndarray(ndim=3), bounds:Bounds, dtype:ti.i32):
-  rescale_func(image, bounds, dtype)
-
 
 @ti.func
 def gamma_func(image: ti.template(), output:ti.template(), gamma:ti.f32, scale_factor:ti.f32, dtype):
