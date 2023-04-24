@@ -12,7 +12,7 @@ def moving_average(old, new, alpha):
   if old is None:
     return new
   
-  return alpha * old + (1 - alpha) * new
+  return (1 - alpha) * old + alpha * new
 
 
 
