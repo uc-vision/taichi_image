@@ -17,7 +17,7 @@ def moving_average(old, new, alpha):
 
 
 
-def camera_isp(name:str, dtype=ti.f32):
+def camera_isp(name:str, dtype=ti.f32, stride=1):
   decode12_kernel = packed.decode12_kernel(dtype, scaled=True)
   decode16_kernel = packed.decode16_kernel(dtype, scaled=True)
 
@@ -41,7 +41,7 @@ def camera_isp(name:str, dtype=ti.f32):
 
   @ti.kernel 
   def  bounds_kernel(image: ti.types.ndarray(dtype=vec_dtype, ndim=2)) -> tonemap.Bounds:
-    return tonemap.bounds_func(image)
+    return tonemap.bounds_func(image, stride)
 
   @ti.kernel
   def linear_kernel(image: ti.types.ndarray(dtype=ti.types.vector(3, ti.u8), ndim=2),
@@ -64,16 +64,18 @@ def camera_isp(name:str, dtype=ti.f32):
                       metrics:vec7,
                       gamma:ti.template(), intensity:ti.template(),
                       light_adapt:ti.template(), color_adapt:ti.template()):
+    
+
     tonemap.reinhard_func(image, tonemap.bounds_from_vec(bounds), tonemap.metering_from_vec(metrics), 
                           intensity, light_adapt, color_adapt, dtype)
     
-    after_bounds = tonemap.bounds_func(image)
+    after_bounds = tonemap.bounds_func(image, stride)
     tonemap.linear_func(image, output, after_bounds, gamma, 255, ti.u8)
 
 
   @ti.kernel
-  def metering_kernel(image: ti.types.ndarray(dtype=vec_dtype, ndim=2), bounds:tm.vec2) -> tonemap.Metering:
-    return tonemap.metering_func(image, tonemap.bounds_from_vec(bounds))
+  def metering_kernel(image: ti.types.ndarray(dtype=vec_dtype, ndim=2), bounds:tm.vec2) -> vec7:
+    return tonemap.metering_func(image, tonemap.bounds_from_vec(bounds), stride).to_vec()
 
 
   @ti.data_oriented
@@ -121,7 +123,7 @@ def camera_isp(name:str, dtype=ti.f32):
       if self.scale is not None:
 
         output_size = (round(w * self.scale), round(h * self.scale))
-        return interpolate.resize_bilinear(image, output_size, self.scale)
+        return interpolate.resize_bilinear(image, output_size, self.scale, self.transform)
 
       elif self.resize_width > 0 or self.transform != interpolate.ImageTransform.none:
 
@@ -165,10 +167,10 @@ def camera_isp(name:str, dtype=ti.f32):
       return self.moving_bounds
     
     def updated_metrics(self, images):
-      image_metrics = [tonemap.metering_to_np(metering_kernel(image, self.moving_bounds)) 
+      image_metrics = [(metering_kernel(image, self.moving_bounds)) 
                  for image in images]
       
-      mean_metrics = np.mean(image_metrics, axis=0)
+      mean_metrics = sum(image_metrics) / len(image_metrics)
       self.moving_metrics = moving_average(self.moving_metrics, mean_metrics, self.moving_alpha)
       return self.moving_metrics
         
@@ -196,7 +198,7 @@ def camera_isp(name:str, dtype=ti.f32):
 
       outputs = [torch.empty_like(image, dtype=torch.uint8, device=self.device) for image in images]
       for image, output in zip(images, outputs):
-        reinhard_kernel(image, output, tm.vec2(*self.moving_bounds), vec7(*self.moving_metrics), 
+        reinhard_kernel(image, output, tm.vec2(*self.moving_bounds), self.moving_metrics, 
                         gamma, intensity, light_adapt, color_adapt)
         
       del images

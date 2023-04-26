@@ -35,14 +35,18 @@ class Bounds:
     return tm.vec2(self.min, self.max)
   
 @ti.func 
-def bounds_func(image: ti.template()) -> Bounds:
+def bounds_func(image: ti.template(), stride:ti.template()) -> Bounds:
     min = np.inf
     max = -np.inf
 
-    for i in ti.grouped(ti.ndrange(*image.shape[:2])):
+    v = tm.ivec2(image.shape[:2])
+
+
+    for i in ti.grouped(ti.ndrange(v.x // stride, v.y // stride)):
       for k in ti.static(range(3)):
-        ti.atomic_min(min, ti.cast(image[i][k], ti.f32))
-        ti.atomic_max(max, ti.cast(image[i][k], ti.f32))
+        p = i * stride
+        ti.atomic_min(min, ti.cast(image[p][k], ti.f32))
+        ti.atomic_max(max, ti.cast(image[p][k], ti.f32))
 
 
     return Bounds(min, max)
@@ -79,7 +83,7 @@ def gamma_func(image: ti.template(), output:ti.template(), gamma:ti.f32, scale_f
       output[i] = ti.cast(tm.clamp(x, 0, 1) * scale_factor, dtype)      
 
 @cache
-def linear_kernel(in_dtype, out_dtype):
+def linear_kernel(in_dtype, out_dtype, stride=8):
   in_vec = ti.types.vector(3, in_dtype)
   out_vec = ti.types.vector(3, out_dtype)
 
@@ -87,16 +91,16 @@ def linear_kernel(in_dtype, out_dtype):
   def k(src: ti.types.ndarray(in_vec, ndim=2), dest: ti.types.ndarray(out_vec, ndim=2), 
                   gamma:ti.f32, scale_factor:ti.f32):
     
-    bounds = bounds_func(src)
+    bounds = bounds_func(src, stride)
     print("bounds", bounds.min, bounds.max)
     linear_func(src, dest, bounds, gamma, scale_factor, out_dtype)
 
   return k
 
 
-def tonemap_linear(src, gamma=1.0, dtype=ti.u8):
+def tonemap_linear(src, gamma=1.0, dtype=ti.u8, stride=8):
   output = types.empty_like(src, src.shape, dtype)
-  k = linear_kernel(types.ti_type(src), dtype)
+  k = linear_kernel(types.ti_type(src), dtype, stride)
 
   k(src, output, gamma, types.scale_factor[dtype])
   return output
@@ -159,7 +163,7 @@ def metering_from_np(x:np.ndarray):
 
 
 @ti.func
-def metering_func(image: ti.template(), bounds:Bounds) -> Metering:
+def metering_func(image: ti.template(), bounds:Bounds, stride:ti.template()) -> Metering:
   total_log_gray = 0.0
   total_gray = 0.0
   total_rgb = tm.vec3(0.0)
@@ -167,8 +171,11 @@ def metering_func(image: ti.template(), bounds:Bounds) -> Metering:
   log_min = ti.f32(np.inf)
   log_max = ti.f32(np.inf)
 
-  for i, j in ti.ndrange(image.shape[0], image.shape[1]):
-    scaled = (image[i, j] - bounds.min) / (bounds.max - bounds.min)
+  size = tm.ivec2(image.shape[:2])
+
+  for i in ti.grouped(ti.ndrange(size.x // stride, size.y // stride)):
+    p = tm.ivec2(i) * stride
+    scaled = (image[p] - bounds.min) / (bounds.max - bounds.min)
 
     gray = ti.f32(rgb_gray(scaled))
     log_gray = tm.log(tm.max(gray, 1e-4))
@@ -179,7 +186,7 @@ def metering_func(image: ti.template(), bounds:Bounds) -> Metering:
 
     total_log_gray += log_gray
     total_gray += gray
-    total_rgb += image[i, j]
+    total_rgb += image[p]
 
   n = (image.shape[0] * image.shape[1])
   mean_rgb = total_rgb / n
@@ -218,7 +225,7 @@ def reinhard_func(image : ti.template(),
 
 
 @cache
-def reinhard_kernel(in_dtype=ti.f32, out_dtype=ti.f32):
+def reinhard_kernel(in_dtype=ti.f32, out_dtype=ti.f32, stride=8):
 
   @ti.kernel
   def k(image: ti.types.ndarray(dtype=ti.types.vector(3, in_dtype), ndim=2), 
@@ -232,7 +239,7 @@ def reinhard_kernel(in_dtype=ti.f32, out_dtype=ti.f32):
     bounds = bounds_func(image)
     linear_func(image, temp, bounds, gamma, 1.0, ti.f32)
 
-    stats = metering_func(temp, Bounds(0, 1))
+    stats = metering_func(temp, Bounds(0, 1), stride)
     reinhard_func(temp, Bounds(0, 1), stats, intensity, light_adapt, color_adapt, ti.f32)
 
     # Gamma correction
