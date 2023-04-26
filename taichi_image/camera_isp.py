@@ -79,19 +79,22 @@ def camera_isp(name:str, dtype=ti.f32):
   class ISP():
     def __init__(self, bayer_pattern:bayer.BayerPattern, 
                   scale:Optional[float]=None, resize_width:int=0,
-                 moving_alpha=0.1, device:torch.device = torch.device('cuda:0')):
+                 moving_alpha=0.1, 
+                 transform:interpolate.ImageTransform=interpolate.ImageTransform.none,
+                 device:torch.device = torch.device('cuda:0')):
       assert scale is None or resize_width == 0, "Cannot specify both scale and resize_width"    
   
       self.bayer_pattern = bayer_pattern
       self.moving_alpha = moving_alpha
       self.scale = scale
       self.resize_width = resize_width
+      self.transform = transform
 
       self.moving_bounds = None
       self.moving_metrics = None
       self.device = device
 
-    def set(self, moving_alpha=None, resize_width=None, scale=None):
+    def set(self, moving_alpha=None, resize_width=None, scale=None, transform=None):
       if moving_alpha is not None:
         self.moving_alpha = moving_alpha
 
@@ -103,6 +106,10 @@ def camera_isp(name:str, dtype=ti.f32):
         self.scale = scale
         self.resize_width = 0
 
+      if transform is not None:
+        self.transform = transform
+        
+
 
     def resize_image(self, image):
       w, h = image.shape[1], image.shape[0]
@@ -111,11 +118,11 @@ def camera_isp(name:str, dtype=ti.f32):
         output_size = (round(w * self.scale), round(h * self.scale))
         return interpolate.resize_bilinear(image, output_size, self.scale)
 
-      elif self.resize_width > 0:
+      elif self.resize_width > 0 or self.transform != interpolate.ImageTransform.none:
 
         scale = self.resize_width / w 
         output_size = (self.resize_width, round(h * scale))
-        return interpolate.resize_bilinear(image, output_size, scale)
+        return interpolate.resize_bilinear(image, output_size, scale, self.transform)
 
       else:
         return image
