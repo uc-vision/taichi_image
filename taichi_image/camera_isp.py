@@ -1,4 +1,5 @@
 from typing import List, Optional, Tuple
+from beartype import beartype
 import taichi as ti
 import taichi.math as tm
 from taichi_image.types import empty_like, ti_to_torch
@@ -77,11 +78,12 @@ def camera_isp(name:str, dtype=ti.f32):
 
   @ti.data_oriented
   class ISP():
+    @beartype
     def __init__(self, bayer_pattern:bayer.BayerPattern, 
                   scale:Optional[float]=None, resize_width:int=0,
                  moving_alpha=0.1, 
                  transform:interpolate.ImageTransform=interpolate.ImageTransform.none,
-                 device:torch.device = torch.device('cuda:0')):
+                 device:torch.device = torch.device('cuda', 0)):
       assert scale is None or resize_width == 0, "Cannot specify both scale and resize_width"    
   
       self.bayer_pattern = bayer_pattern
