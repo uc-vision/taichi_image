@@ -7,14 +7,12 @@ import torch
 
 from . import tonemap, interpolate, bayer, packed
 import numpy as np
-from py_structs.torch import shape_info
 
 def moving_average(old, new, alpha):
   if old is None:
     return new
   
   return (1 - alpha) * old + alpha * new
-
 
 
 def camera_isp(name:str, dtype=ti.f32):
@@ -72,8 +70,8 @@ def camera_isp(name:str, dtype=ti.f32):
 
 
   @ti.kernel
-  def metering_kernel(image: ti.types.ndarray(dtype=vec_dtype, ndim=2), bounds:tm.vec2) -> tonemap.Metering:
-    return tonemap.metering_func(image, tonemap.bounds_from_vec(bounds))
+  def metering_kernel(image: ti.types.ndarray(dtype=vec_dtype, ndim=2), bounds:tm.vec2) -> vec7:
+    return tonemap.metering_func(image, tonemap.bounds_from_vec(bounds)).to_vec()
 
 
   @ti.data_oriented
@@ -165,10 +163,10 @@ def camera_isp(name:str, dtype=ti.f32):
       return self.moving_bounds
     
     def updated_metrics(self, images):
-      image_metrics = [tonemap.metering_to_np(metering_kernel(image, self.moving_bounds)) 
+      image_metrics = [metering_kernel(image, self.moving_bounds)
                  for image in images]
       
-      mean_metrics = np.mean(image_metrics, axis=0)
+      mean_metrics = sum(image_metrics) / len(image_metrics)
       self.moving_metrics = moving_average(self.moving_metrics, mean_metrics, self.moving_alpha)
       return self.moving_metrics
         
@@ -196,7 +194,7 @@ def camera_isp(name:str, dtype=ti.f32):
 
       outputs = [torch.empty_like(image, dtype=torch.uint8, device=self.device) for image in images]
       for image, output in zip(images, outputs):
-        reinhard_kernel(image, output, tm.vec2(*self.moving_bounds), vec7(*self.moving_metrics), 
+        reinhard_kernel(image, output, tm.vec2(*self.moving_bounds), self.moving_metrics, 
                         gamma, intensity, light_adapt, color_adapt)
         
       del images
