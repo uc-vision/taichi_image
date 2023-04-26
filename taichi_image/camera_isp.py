@@ -119,7 +119,7 @@ def camera_isp(name:str, dtype=ti.f32):
       if self.scale is not None:
 
         output_size = (round(w * self.scale), round(h * self.scale))
-        return interpolate.resize_bilinear(image, output_size, self.scale)
+        return interpolate.resize_bilinear(image, output_size, self.scale, self.transform)
 
       elif self.resize_width > 0 or self.transform != interpolate.ImageTransform.none:
 
