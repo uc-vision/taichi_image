@@ -17,7 +17,7 @@ def moving_average(old, new, alpha):
 
 
 
-def camera_isp(name:str, dtype=ti.f32, stride=1):
+def camera_isp(name:str, dtype=ti.f32, stride=8):
   decode12_kernel = packed.decode12_kernel(dtype, scaled=True)
   decode16_kernel = packed.decode16_kernel(dtype, scaled=True)
 
