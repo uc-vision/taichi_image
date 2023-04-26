@@ -96,7 +96,10 @@ def camera_isp(name:str, dtype=ti.f32):
       self.moving_metrics = None
       self.device = device
 
-    def set(self, moving_alpha=None, resize_width=None, scale=None, transform=None):
+    @beartype
+    def set(self, moving_alpha:Optional[float]=None, resize_width:Optional[int]=None, 
+              scale:Optional[float]=None, 
+              transform:Optional[interpolate.ImageTransform]=None):
       if moving_alpha is not None:
         self.moving_alpha = moving_alpha
 

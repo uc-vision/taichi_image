@@ -8,7 +8,7 @@ from taichi_image.bench.util import benchmark
 from taichi_image.test.bayer import display_rgb
 from taichi_image.test.camera_isp import load_test_image
 from tqdm import tqdm
-from test.arguments import init_with_args
+from taichi_image.test.arguments import init_with_args
 import numpy as np
 import cv2
 
@@ -24,7 +24,7 @@ class Processor:
     self.image_size = image_size
 
   def __call__(self, images):
-    next = [self.isp.load_packed12(image, image_size=self.image_size) for image in images]
+    next = [self.isp.load_packed12(image) for image in images]
     return self.isp.tonemap_reinhard(next, gamma=0.6)
 
 
