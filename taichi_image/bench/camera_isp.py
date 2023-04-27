@@ -7,6 +7,7 @@ import torch
 from taichi_image.bench.util import benchmark
 from taichi_image.test.bayer import display_rgb
 from taichi_image.test.camera_isp import load_test_image
+from taichi_image.interpolate import ImageTransform
 from tqdm import tqdm
 from taichi_image.test.arguments import init_with_args
 import numpy as np
@@ -20,7 +21,7 @@ import taichi as ti
 
 class Processor:
   def __init__(self, image_size):
-    self.isp = camera_isp.Camera16(bayer.BayerPattern.RGGB, moving_alpha=0.1, resize_width=2560)
+    self.isp = camera_isp.Camera16(bayer.BayerPattern.RGGB, moving_alpha=0.1, resize_width=3072, transform=ImageTransform.rotate90)
     self.image_size = image_size
 
   def __call__(self, images):
