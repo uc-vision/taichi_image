@@ -21,11 +21,11 @@ import taichi as ti
 
 class Processor:
   def __init__(self, image_size):
-    self.isp = camera_isp.Camera16(bayer.BayerPattern.RGGB, moving_alpha=0.1, resize_width=3072, transform=ImageTransform.rotate90)
+    self.isp = camera_isp.Camera16(bayer.BayerPattern.RGGB, moving_alpha=0.1, resize_width=3072, transform=ImageTransform.rotate_90)
     self.image_size = image_size
 
-  def __call__(self, images):
-    next = [self.isp.load_packed12(image) for image in images]
+  def __call__(self, image):
+    next = self.isp.load_packed12(image)
     return self.isp.tonemap_reinhard(next, gamma=0.6)
 
 
@@ -41,14 +41,14 @@ def main():
   # pool = Pool(1, initializer=partial(ti.init, arch=ti.cuda, device_memory_GB=0.5))
   # test_images, test_image = pool.apply(load_test_image, args=[args.image, 6, bayer.BayerPattern.RGGB])
 
-  test_images, test_image = load_test_image(args.image, 6, bayer.BayerPattern.RGGB)
+  test_packed, test_image = load_test_image(args.image,  bayer.BayerPattern.RGGB)
   h, w, _ = test_image.shape
 
-  test_images = [torch.from_numpy(x).to(device='cuda:0') for x in test_images]                 
+  test_packed = torch.from_numpy(test_packed).to(device='cuda:0')
   f = Processor(image_size=(h, w))
   
   benchmark("camera_isp", 
-    f, [test_images], 
+    f, [test_packed], 
     iterations=1000, warmup=100)   
   
   
