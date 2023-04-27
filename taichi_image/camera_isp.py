@@ -17,6 +17,10 @@ def moving_average(old, new, alpha):
   return (1 - alpha) * old + alpha * new
 
 
+# def expand_bounds(b:Bounds, x:ti.f32):
+#   ti.atomic_min(b.min, x)
+#   ti.atomic_max(b.max, x)
+
 
 def camera_isp(name:str, dtype=ti.f32):
   decode12_kernel = packed.decode12_kernel(dtype, scaled=True)
@@ -41,8 +45,6 @@ def camera_isp(name:str, dtype=ti.f32):
 
 
 
-
-
   @ti.dataclass
   class Metering:
     bounds : Bounds
@@ -63,16 +65,16 @@ def camera_isp(name:str, dtype=ti.f32):
       gray = ti.f32(rgb_gray(scaled))
       log_gray = tm.log(tm.max(gray, 1e-4))
 
-
-      ti.atomic_min(self.bounds.min, gray)
-      ti.atomic_max(self.bounds.max, gray)
-
       ti.atomic_min(self.log_bounds.min, log_gray)
       ti.atomic_max(self.log_bounds.max, log_gray)
 
+      for i in ti.static(range(3)):
+        ti.atomic_min(self.bounds.min, rgb[i])
+        ti.atomic_max(self.bounds.max, rgb[i])
+
       self.log_mean += log_gray
       self.mean += gray
-      self.rgb_mean += rgb
+      self.rgb_mean += scaled
 
     @ti.func
     def normalise(self, n:ti.i32):
@@ -93,10 +95,12 @@ def camera_isp(name:str, dtype=ti.f32):
       for k in ti.static(range(3)):
         bounds.expand(image[i, j][k])
 
+
     stats = Metering(Bounds(np.inf, -np.inf), Bounds(np.inf, -np.inf), 0, 0, tm.vec3(0, 0, 0))      
     for i, j in ti.ndrange(image.shape[0], image.shape[1]):
       scaled = bounds.scale_range(image[i, j])
       stats.accum(image[i, j], scaled)
+
 
     stats.normalise(image.shape[0] * image.shape[1])
     return stats.to_vec()
@@ -126,7 +130,7 @@ def camera_isp(name:str, dtype=ti.f32):
     for i in ti.grouped(ti.ndrange(image.shape[0], image.shape[1])):
   
       scaled =  (image[i] - b.min) / (b.max - b.min)
-      stats.accum(image[i], scaled)
+      next_stats.accum(image[i], scaled)
 
       gray = rgb_gray(scaled)
       
@@ -243,18 +247,16 @@ def camera_isp(name:str, dtype=ti.f32):
         
     
     def tonemap_reinhard(self, cfa, gamma=1.0, intensity=1.0, light_adapt=1.0, color_adapt=0.0):
-      # rgb = bayer.bayer_to_rgb(cfa)
-      image = self.resize_image(cfa)
+      rgb = bayer.bayer_to_rgb(cfa)
+      image = self.resize_image(rgb) 
 
-      return tonemap.tonemap_reinhard(image, gamma, intensity, light_adapt, color_adapt)
-      
-      # output = torch.empty_like(image, dtype=torch.uint8, device=self.device) 
+      output = torch.empty_like(image, dtype=torch.uint8, device=self.device) 
 
-      # if self.metrics is None:
-      #   self.metrics = metering_kernel(image)
+      if self.metrics is None:
+        self.metrics = metering_kernel(image)
 
-      # self.metrics = reinhard_kernel(image, output, self.metrics, gamma, intensity, light_adapt, color_adapt)
-      # return output
+      self.metrics = reinhard_kernel(image, output, self.metrics, gamma, intensity, light_adapt, color_adapt)
+      return output
 
   ISP.__qualname__ = name
   return ISP

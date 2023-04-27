@@ -16,8 +16,8 @@ def load_test_image(filename, pattern = bayer.BayerPattern.RGGB):
   elif test_image.dtype == np.uint16:
     test_image = test_image.astype(np.float32) / 65535
   
-  cfa =  bayer.rgb_to_bayer( (np.clip(test_image, 0, 1) * 65536).astype(np.uint16), pattern=pattern) 
-  raw = packed.encode12(cfa) 
+  cfa =  bayer.rgb_to_bayer(np.clip(test_image, 0, 1), pattern=pattern) 
+  raw = packed.encode12(cfa, scaled=True) 
   return raw, test_image
 
 
@@ -30,11 +30,11 @@ def main():
   args = init_with_args()
 
   raw_image, test_image = load_test_image(args.image, pattern = bayer.BayerPattern.RGGB)
-  isp = camera_isp.Camera32(bayer.BayerPattern.RGGB, moving_alpha=1.0, resize_width=512)
+  isp = camera_isp.Camera32(bayer.BayerPattern.RGGB, moving_alpha=1.0, resize_width=1280)
 
   
-  # image = isp.load_packed12(torch.from_numpy(raw_image)) 
-  outputs = isp.tonemap_reinhard(torch.from_numpy(test_image).to(torch.float32), gamma=0.6)
+  image = isp.load_packed12(torch.from_numpy(raw_image)) 
+  outputs = isp.tonemap_reinhard(image, gamma=0.6)
 
 
 

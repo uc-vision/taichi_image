@@ -32,7 +32,6 @@ def linear_kernel(in_dtype, out_dtype):
                   gamma:ti.f32, scale_factor:ti.f32):
     
     bounds = bounds_func(src)
-    print("bounds", bounds.min, bounds.max)
     linear_func(src, dest, bounds, gamma, scale_factor, out_dtype)
 
   return k
@@ -81,7 +80,7 @@ def metering_func(image: ti.template(), bounds:Bounds) -> Metering:
   total_rgb = tm.vec3(0.0)
   
   log_min = ti.f32(np.inf)
-  log_max = ti.f32(np.inf)
+  log_max = -ti.f32(np.inf)
 
   for i, j in ti.ndrange(image.shape[0], image.shape[1]):
     scaled = (image[i, j] - bounds.min) / (bounds.max - bounds.min)
@@ -89,13 +88,12 @@ def metering_func(image: ti.template(), bounds:Bounds) -> Metering:
     gray = ti.f32(rgb_gray(scaled))
     log_gray = tm.log(tm.max(gray, 1e-4))
 
-    # To side-step a bug use negative atomic_min instead of atomic_max
-    ti.atomic_min(log_max, -log_gray)
+    ti.atomic_max(log_max, log_gray)
     ti.atomic_min(log_min, log_gray)
 
     total_log_gray += log_gray
     total_gray += gray
-    total_rgb += image[i, j]
+    total_rgb += scaled
 
   n = (image.shape[0] * image.shape[1])
   mean_rgb = total_rgb / n
@@ -145,7 +143,7 @@ def reinhard_kernel(in_dtype=ti.f32, out_dtype=ti.f32):
                       color_adapt:ti.f32):
     
     bounds = bounds_func(image)
-    linear_func(image, temp, bounds, gamma, 1.0, ti.f32)
+    linear_func(image, temp, bounds, 1.0, 1.0, ti.f32)
 
     stats = metering_func(temp, Bounds(0, 1))
     reinhard_func(temp, stats, intensity, light_adapt, color_adapt, ti.f32)
