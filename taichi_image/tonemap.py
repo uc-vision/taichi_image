@@ -1,5 +1,4 @@
-from torch import lerp
-from taichi_image.util import Bounds, bounds_func, cache, vec7, rgb_gray
+from taichi_image.util import Bounds, bounds_func, cache, vec7, rgb_gray, lerp
 import numpy as np
 
 import taichi as ti
@@ -108,7 +107,6 @@ def metering_func(image: ti.template(), bounds:Bounds) -> Metering:
 
 @ti.func
 def reinhard_func(image : ti.template(),
-                  bounds : Bounds,
                   stats : Metering,
                     intensity:ti.f32, 
                     light_adapt:ti.f32, 
@@ -121,7 +119,7 @@ def reinhard_func(image : ti.template(),
 
   mean = lerp(color_adapt, stats.gray_mean, stats.rgb_mean)
   for i, j in ti.ndrange(image.shape[0], image.shape[1]):
-    scaled = (image[i, j] - bounds.min) / (bounds.max - bounds.min)
+    scaled = image[i, j] 
     gray = rgb_gray(scaled)
 
     # Blend between gray value and RGB value
@@ -150,7 +148,7 @@ def reinhard_kernel(in_dtype=ti.f32, out_dtype=ti.f32):
     linear_func(image, temp, bounds, gamma, 1.0, ti.f32)
 
     stats = metering_func(temp, Bounds(0, 1))
-    reinhard_func(temp, Bounds(0, 1), stats, intensity, light_adapt, color_adapt, ti.f32)
+    reinhard_func(temp, stats, intensity, light_adapt, color_adapt, ti.f32)
 
     # Gamma correction
     bounds2 = bounds_func(temp)

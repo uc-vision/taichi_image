@@ -41,9 +41,7 @@ def camera_isp(name:str, dtype=ti.f32):
 
 
 
-  @ti.func
-  def metering_from_vec(vec: ti.template()):
-    return Metering(Bounds(vec[0], vec[1]), Bounds(vec[2], vec[3]), vec[4], vec[5], vec[6:9])
+
 
   @ti.dataclass
   class Metering:
@@ -56,7 +54,8 @@ def camera_isp(name:str, dtype=ti.f32):
     @ti.func
     def to_vec(self):
       return vec9(
-        *self.bounds.to_vec(), *self.log_bounds.to_vec(),
+        self.bounds.min, self.bounds.max,
+        self.log_bounds.min, self.log_bounds.max,
                     self.log_mean, self.mean, *self.rgb_mean)
 
     @ti.func 
@@ -64,19 +63,27 @@ def camera_isp(name:str, dtype=ti.f32):
       gray = ti.f32(rgb_gray(scaled))
       log_gray = tm.log(tm.max(gray, 1e-4))
 
-      self.bounds.accum(gray)
-      self.log_bounds.accum(log_gray)
+
+      ti.atomic_min(self.bounds.min, gray)
+      ti.atomic_max(self.bounds.max, gray)
+
+      ti.atomic_min(self.log_bounds.min, log_gray)
+      ti.atomic_max(self.log_bounds.max, log_gray)
 
       self.log_mean += log_gray
       self.mean += gray
       self.rgb_mean += rgb
 
     @ti.func
-    def mean(self, n:ti.i32):
+    def normalise(self, n:ti.i32):
       self.log_mean /= ti.f32(n)
       self.mean /= ti.f32(n)
       self.rgb_mean /= ti.f32(n)
 
+
+  @ti.func
+  def metering_from_vec(vec: ti.template()) -> Metering:
+    return Metering(Bounds(vec[0], vec[1]), Bounds(vec[2], vec[3]), vec[4], vec[5], vec[6:9])
 
   @ti.kernel
   def metering_kernel(image: ti.types.ndarray(dtype=vec_dtype, ndim=2)) -> vec9:
@@ -84,20 +91,20 @@ def camera_isp(name:str, dtype=ti.f32):
     bounds = Bounds(np.inf, -np.inf)
     for i, j in ti.ndrange(image.shape[0], image.shape[1]):
       for k in ti.static(range(3)):
-        bounds.accum(image[i, j][k])
+        bounds.expand(image[i, j][k])
 
     stats = Metering(Bounds(np.inf, -np.inf), Bounds(np.inf, -np.inf), 0, 0, tm.vec3(0, 0, 0))      
     for i, j in ti.ndrange(image.shape[0], image.shape[1]):
       scaled = bounds.scale_range(image[i, j])
       stats.accum(image[i, j], scaled)
 
+    stats.normalise(image.shape[0] * image.shape[1])
     return stats.to_vec()
 
 
 
   @ti.kernel
   def reinhard_kernel(image: ti.types.ndarray(dtype=vec_dtype, ndim=2), 
-        temp : ti.types.ndarray(dtype=vec_dtype, ndim=2),
             dest: ti.types.ndarray(dtype=ti.types.vector(3, ti.u8), ndim=2),
             metering : vec9,
                       gamma:ti.f32, 
@@ -106,17 +113,20 @@ def camera_isp(name:str, dtype=ti.f32):
                       color_adapt:ti.f32) -> vec9:
     
     stats = metering_from_vec(metering)
-    b = stats.log_bounds
-    key = (b.max - stats.log_mean) / (b.max - b.min)
+    log_b = stats.log_bounds
+    b = stats.bounds
+
+    key = (log_b.max - stats.log_mean) / (log_b.max - log_b.min)
     map_key = 0.3 + 0.7 * tm.pow(key, 1.4)
 
     next_stats = Metering(Bounds(np.inf, -np.inf), Bounds(np.inf, -np.inf), 0, 0, tm.vec3(0, 0, 0))
     out_bounds = Bounds(np.inf, -np.inf)
 
-    mean = lerp(color_adapt, stats.gray_mean, stats.rgb_mean)
-    for i, j in ti.ndrange(image.shape[0], image.shape[1]):
-      scaled = stats.bounds.scale_range(image[i, j])
-      stats.accum(image[i, j], scaled)
+    mean = lerp(color_adapt, stats.mean, stats.rgb_mean)
+    for i in ti.grouped(ti.ndrange(image.shape[0], image.shape[1])):
+  
+      scaled =  (image[i] - b.min) / (b.max - b.min)
+      stats.accum(image[i], scaled)
 
       gray = rgb_gray(scaled)
       
@@ -128,14 +138,15 @@ def camera_isp(name:str, dtype=ti.f32):
       adapt = tm.pow(tm.exp(-intensity) * adapt_mean, map_key)
 
       p = scaled * (1.0 / (adapt + scaled))
-      out_bounds.accum(p)
-      
-      temp[i, j] = p
+      for k in ti.static(range(3)):
+        out_bounds.expand(p[k])
 
-    tonemap.linear_func(temp, dest, out_bounds, gamma, 255, ti.u8)
+      image[i] = ti.cast(p, dtype)
 
-    next_stats.mean(image.shape[0] * image.shape[1])
-    return next_stats
+    tonemap.linear_func(image, dest, out_bounds, gamma, 255, ti.u8)
+
+    next_stats.normalise(image.shape[0] * image.shape[1])
+    return next_stats.to_vec()
 
 
 
@@ -211,7 +222,6 @@ def camera_isp(name:str, dtype=ti.f32):
 
       cfa = torch.empty(h, w, dtype=torch_dtype, device=self.device)    
       decode12_kernel(image_data.view(-1), cfa.view(-1))
-
       return cfa
 
     def load_packed16(self, image_data):
@@ -231,23 +241,20 @@ def camera_isp(name:str, dtype=ti.f32):
       self.moving_metrics = moving_average(self.moving_metrics, mean_metrics, self.moving_alpha)
       return self.moving_metrics
         
-
-    def _process_input(self, cfa):
-      rgb = bayer.bayer_to_rgb(cfa)
-      return self.resize_image(rgb)
-
-
     
     def tonemap_reinhard(self, cfa, gamma=1.0, intensity=1.0, light_adapt=1.0, color_adapt=0.0):
-      image = self._process_input(cfa)
-      output = torch.empty_like(image, dtype=torch.uint8, device=self.device) 
+      # rgb = bayer.bayer_to_rgb(cfa)
+      image = self.resize_image(cfa)
 
-      if self.metrics is None:
-        self.metrics = metering_kernel(image)
+      return tonemap.tonemap_reinhard(image, gamma, intensity, light_adapt, color_adapt)
+      
+      # output = torch.empty_like(image, dtype=torch.uint8, device=self.device) 
 
-      self.metrics = reinhard_kernel(image, output, self.metrics, gamma, intensity, light_adapt, color_adapt)
-        
-      return output
+      # if self.metrics is None:
+      #   self.metrics = metering_kernel(image)
+
+      # self.metrics = reinhard_kernel(image, output, self.metrics, gamma, intensity, light_adapt, color_adapt)
+      # return output
 
   ISP.__qualname__ = name
   return ISP

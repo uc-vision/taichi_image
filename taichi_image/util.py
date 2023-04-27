@@ -30,13 +30,12 @@ class Bounds:
   @ti.func
   def union(self, other):
     ti.atomic_min(self.min, other.min)
-    ti.atomic_min(-self.max, -other.max)
+    ti.atomic_max(self.max, other.max)
 
   @ti.func
   def expand(self, v):
     ti.atomic_min(self.min, v)
-    ti.atomic_min(-self.max, -v)
-
+    ti.atomic_max(self.max, v)
 
   @ti.func
   def to_vec(self):
@@ -45,7 +44,7 @@ class Bounds:
 
   @ti.func
   def scale_range(self, v:ti.template()):
-    return (v - self.min) / self.span
+    return (v - self.min) / self.span()
   
 @ti.func 
 def bounds_func(image: ti.template()) -> Bounds:
