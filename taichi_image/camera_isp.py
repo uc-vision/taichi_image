@@ -243,10 +243,10 @@ def camera_isp(name:str, dtype=ti.f32):
       else:
         self.metrics = metering_images(images, self.moving_alpha, self.metrics)
 
-      # for image in images:
-      #   reinhard_kernel(image, self.metrics, intensity, light_adapt, color_adapt)
+      for image in images:
+        reinhard_kernel(image, self.metrics, intensity, light_adapt, color_adapt)
       
-      # return [linear_output(image, gamma) for image in images]
+      return [linear_output(image, gamma) for image in images]
     
 
 
