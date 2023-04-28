@@ -23,9 +23,9 @@ class Processor:
   def __init__(self):
     self.isp = camera_isp.Camera16(bayer.BayerPattern.RGGB, moving_alpha=0.1, resize_width=64)
 
-  def __call__(self, image):
+  def __call__(self, images):
       
-    next = self.isp.load_packed12(image)
+    next = [self.isp.load_packed12(image) for image in images]
     out =  self.isp.tonemap_reinhard(next, gamma=0.6)
     return out
 
@@ -45,10 +45,12 @@ def main():
   h, w, _ = test_image.shape
 
   test_packed = torch.from_numpy(test_packed).to(device='cuda:0')
-  processors = [Processor() for i in range(6)]
+  test_images = [test_packed.clone() for _ in range(6)]
+  processor = Processor()
+
 
   for i in tqdm(range(10000)):  
-    out = [p(test_packed) for p in processors]
+    out = processor(test_images)
 
 
   torch.cuda.synchronize()

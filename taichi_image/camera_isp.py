@@ -29,9 +29,23 @@ def metering(image, bounds):
 
   log_grey = torch.log(torch.clamp(grey, min=1e-4))
 
-  return torch.concatenate([bounds,
+  return torch.concatenate([
     log_grey.min().view(1), log_grey.max().view(1),
                 log_grey.mean().view(1), grey_mean.view(1), image.mean(dim=(0, 1))], dim=0)
+
+@torch.compile(backend="cudagraphs")
+def metering_images(images, t, prev):
+    images_bounds = torch.stack([image_bounds(image) for image in images])
+    bounds = torch.concatenate([images_bounds[:, 0].min().view(1), 
+                                images_bounds[:, 1].max().view(1)])
+
+    new_bounds = t * prev[:2] + (1.0 - t) * bounds
+
+    image_stats = torch.stack([metering(image, new_bounds) for image in images])
+    stats = image_stats.mean(dim=0)
+
+    new_stats = t * prev[2:] + (1.0 - t) * stats
+    return torch.concatenate([new_bounds, new_stats])
 
 
 def camera_isp(name:str, dtype=ti.f32):
@@ -56,7 +70,6 @@ def camera_isp(name:str, dtype=ti.f32):
       out[i] = ti.cast(image[i], dtype)
 
 
-
   @ti.dataclass
   class Metering:
     bounds : Bounds
@@ -70,8 +83,6 @@ def camera_isp(name:str, dtype=ti.f32):
       return vec9(
         self.log_bounds.min, self.log_bounds.max,
                     self.log_mean, self.mean, *self.rgb_mean)
-
-
   
   
   def linear_output(image, gamma=1.0):
@@ -215,22 +226,20 @@ def camera_isp(name:str, dtype=ti.f32):
       rgb = bayer.bayer_to_rgb(cfa)
       return self.resize_image(rgb) 
 
-    def _metering(images):
-        images_bounds = torch.stack([image_bounds(image) for image in images])
-        bounds = torch.concatenate([images_bounds[:, 0].min().view(1), images_bounds[:, 1].max().view(1)])
 
 
-
-
-
-    def tonemap_reinhard(self, cfa_images, gamma=1.0, intensity=1.0, light_adapt=1.0, color_adapt=0.0):
+    @beartype
+    def tonemap_reinhard(self, cfa_images:List[torch.Tensor], 
+                         gamma:float=1.0, intensity:float=1.0, light_adapt:float=1.0, color_adapt:float=0.0):
       images = [self._process_image(cfa) for cfa in cfa_images]
 
+      if self.metrics is None:
+        self.metrics = metering_images(images, 0.0, torch.zeros(3, dtype=torch_dtype, device=self.device))
+      else:
+        self.metrics = metering_images(images, self.moving_alpha, self.metrics)
 
-
-
-      reinhard_kernel(image, self.metrics, intensity, light_adapt, color_adapt)
-      return linear_output(image, gamma)
+      # reinhard_kernel(image, self.metrics, intensity, light_adapt, color_adapt)
+      # return linear_output(image, gamma)
     
 
 
