@@ -43,6 +43,7 @@ def metering_images(images, t, prev, stride=8):
 
     stats = metering(images, new_bounds)
     new_stats = t * prev[2:] + (1.0 - t) * stats
+
     return torch.concatenate([new_bounds, new_stats])
 
 
@@ -200,26 +201,26 @@ def camera_isp(name:str, dtype=ti.f32):
     def load_16u(self, image):
       cfa = torch.empty(image.shape, dtype=torch_dtype, device=self.device)
       load_u16(image, cfa)
-      return cfa
+      return self._process_image(cfa)
 
     def load_16f(self, image):
       cfa = torch.empty(image.shape, dtype=torch_dtype, device=self.device)
       load_16f(image, cfa)
-      return cfa
+      return self._process_image(cfa)
 
     def load_packed12(self, image_data):
       w, h = (image_data.shape[1] * 2 // 3, image_data.shape[0])
 
       cfa = torch.empty(h, w, dtype=torch_dtype, device=self.device)    
       decode12_kernel(image_data.view(-1), cfa.view(-1))
-      return cfa
+      return self._process_image(cfa)
 
     def load_packed16(self, image_data):
       w, h = (image_data.shape[1] // 2, image_data.shape[0])
 
       cfa = torch.empty(h, w, dtype=torch_dtype, device=self.device)    
       decode16_kernel(image_data.view(-1), cfa.view(-1))
-      return cfa
+      return self._process_image(cfa)
 
     def updated_bounds(self, bounds:List[Bounds]):
       bounds = tonemap.union_bounds(bounds)
@@ -238,15 +239,13 @@ def camera_isp(name:str, dtype=ti.f32):
 
 
     @beartype
-    def tonemap_reinhard(self, cfa_images:List[torch.Tensor], 
+    def tonemap_reinhard(self, images:List[torch.Tensor], 
                          gamma:float=1.0, intensity:float=1.0, light_adapt:float=1.0, color_adapt:float=0.0):
-      images = [self._process_image(cfa) for cfa in cfa_images]
 
       if self.metrics is None:
         self.metrics = metering_images(images, 0.0, torch.zeros(3, dtype=torch_dtype, device=self.device), self.metering_stride)
       else:
-        self.metrics = metering_images(images, self.moving_alpha, self.metrics, self.metering_stride)
-
+        self.metrics = metering_images(images, (1.0 - self.moving_alpha), self.metrics, self.metering_stride)
 
       outputs = [torch.empty(image.shape, dtype=torch.uint8, device=self.device) for image in images]
       for output, image in zip(outputs, images):
