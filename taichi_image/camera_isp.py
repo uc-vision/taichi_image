@@ -4,6 +4,7 @@ import taichi as ti
 import taichi.math as tm
 from taichi_image.types import empty_like, ti_to_torch
 import torch
+import torch.nn.functional as F
 
 from taichi_image.util import Bounds, lerp, vec9, rgb_gray
 
@@ -33,16 +34,20 @@ def metering(image, bounds):
     log_grey.min().view(1), log_grey.max().view(1),
                 log_grey.mean().view(1), grey_mean.view(1), image.mean(dim=(0, 1))], dim=0)
 
-@torch.compile(backend="cudagraphs")
+@torch.compile
 def metering_images(images, t, prev):
-    images_bounds = torch.stack([image_bounds(image) for image in images])
-    bounds = torch.concatenate([images_bounds[:, 0].min().view(1), 
-                                images_bounds[:, 1].max().view(1)])
+    images = torch.concatenate([image[::8, ::8, :] for image in images], 0)
+    bounds = image_bounds(images)
+
+    # images_bounds = torch.stack([image_bounds(image) for image in images])
+    # bounds = torch.concatenate([images_bounds[:, 0].min().view(1), 
+    #                             images_bounds[:, 1].max().view(1)])
 
     new_bounds = t * prev[:2] + (1.0 - t) * bounds
 
-    image_stats = torch.stack([metering(image, new_bounds) for image in images])
-    stats = image_stats.mean(dim=0)
+    # image_stats = torch.stack([metering(image, new_bounds) for image in images])
+    # stats = image_stats.mean(dim=0)
+    stats = metering(images, new_bounds)
 
     new_stats = t * prev[2:] + (1.0 - t) * stats
     return torch.concatenate([new_bounds, new_stats])
@@ -84,6 +89,7 @@ def camera_isp(name:str, dtype=ti.f32):
         self.log_bounds.min, self.log_bounds.max,
                     self.log_mean, self.mean, *self.rgb_mean)
   
+  @torch.compile
   def linear_output(image, gamma=1.0):
     upper = torch.max(image)
     linear = 255 * (image / upper).pow(1/gamma)
@@ -237,10 +243,10 @@ def camera_isp(name:str, dtype=ti.f32):
       else:
         self.metrics = metering_images(images, self.moving_alpha, self.metrics)
 
-      for image in images:
-        reinhard_kernel(image, self.metrics, intensity, light_adapt, color_adapt)
+      # for image in images:
+      #   reinhard_kernel(image, self.metrics, intensity, light_adapt, color_adapt)
       
-      return [linear_output(image, gamma) for image in images]
+      # return [linear_output(image, gamma) for image in images]
     
 
 

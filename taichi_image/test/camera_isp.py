@@ -29,7 +29,6 @@ def load_test_images(filename, num_cameras, pattern = bayer.BayerPattern.RGGB):
 def main():
   args = init_with_args()
 
-
   test_packed, test_image = load_test_image(args.image, pattern = bayer.BayerPattern.RGGB)
 
   test_images = [torch.from_numpy(test_packed).clone() for _ in range(6)]
