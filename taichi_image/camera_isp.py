@@ -85,7 +85,7 @@ def camera_isp(name:str, dtype=ti.f32):
   def image_bounds(image):
     return torch.concatenate([image.min().view(1), image.max().view(1)])
 
-  @torch.compile
+  @torch.compile(backend="cudagraphs")
   def torch_metering(image, bounds):
     weights = torch.tensor([0.299, 0.587, 0.114], dtype=torch_dtype, device=image.device)
     
@@ -99,7 +99,7 @@ def camera_isp(name:str, dtype=ti.f32):
       log_grey.min().view(1), log_grey.max().view(1),
                   log_grey.mean().view(1), grey_mean.view(1), image.mean(dim=(0, 1))], dim=0)
   
-
+  
   def linear_output(image, gamma=1.0):
     upper = torch.max(image)
     linear = 255 * (image / upper).pow(1/gamma)
