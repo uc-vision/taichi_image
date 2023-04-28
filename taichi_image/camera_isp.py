@@ -33,6 +33,7 @@ def metering(image, bounds):
     log_grey.min().view(1), log_grey.max().view(1),
                 log_grey.mean().view(1), grey_mean.view(1), image.mean(dim=(0, 1))], dim=0)
 
+@torch.compile(backend="cudagraphs")
 def metering_images(images, t, prev):
     images_bounds = torch.stack([image_bounds(image) for image in images])
     bounds = torch.concatenate([images_bounds[:, 0].min().view(1), 
@@ -226,7 +227,7 @@ def camera_isp(name:str, dtype=ti.f32):
 
 
 
-    @torch.compile(backend="cudagraphs")
+    @beartype
     def tonemap_reinhard(self, cfa_images:List[torch.Tensor], 
                          gamma:float=1.0, intensity:float=1.0, light_adapt:float=1.0, color_adapt:float=0.0):
       images = [self._process_image(cfa) for cfa in cfa_images]
