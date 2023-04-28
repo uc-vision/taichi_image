@@ -107,15 +107,25 @@ def camera_isp(name:str, dtype=ti.f32):
 
 
 
+  # @ti.kernel
+  # def reinhard_kernel(image: ti.types.ndarray(dtype=vec_dtype, ndim=2), 
+  #           dest: ti.types.ndarray(dtype=ti.types.vector(3, ti.u8), ndim=2),
+  #           metering : vec9,
+  #                     gamma:ti.f32, 
+  #                     intensity:ti.f32, 
+  #                     light_adapt:ti.f32, 
+  #                     color_adapt:ti.f32) -> vec9:
+    
   @ti.kernel
   def reinhard_kernel(image: ti.types.ndarray(dtype=vec_dtype, ndim=2), 
-            dest: ti.types.ndarray(dtype=ti.types.vector(3, ti.u8), ndim=2),
-            metering : vec9,
-                      gamma:ti.f32, 
-                      intensity:ti.f32, 
-                      light_adapt:ti.f32, 
-                      color_adapt:ti.f32) -> vec9:
+          dest: ti.types.ndarray(dtype=ti.types.vector(3, ti.u8), ndim=2),
+          metering : vec9,
+                    gamma:ti.template(), 
+                    intensity:ti.template(),
+                    light_adapt:ti.template(),
+                    color_adapt:ti.template()) -> vec9:
     
+
     stats = metering_from_vec(metering)
     log_b = stats.log_bounds
     b = stats.bounds
@@ -196,17 +206,18 @@ def camera_isp(name:str, dtype=ti.f32):
 
     def resize_image(self, image):
       w, h = image.shape[1], image.shape[0]
-      if self.scale is not None:
-
-        output_size = (round(w * self.scale), round(h * self.scale))
-        return interpolate.resize_bilinear(image, output_size, self.scale)
-
-      elif self.resize_width > 0 or self.transform != interpolate.ImageTransform.none:
+      if self.resize_width > 0:
 
         scale = self.resize_width / w 
         output_size = (self.resize_width, round(h * scale))
         return interpolate.resize_bilinear(image, output_size, scale, self.transform)
+      elif self.scale is not None:
 
+        output_size = (round(w * self.scale), round(h * self.scale))
+        return interpolate.resize_bilinear(image, output_size, self.scale)
+      elif self.transform != interpolate.ImageTransform.none:
+        return interpolate.transform(image, self.transform)
+      
       else:
         return image
 

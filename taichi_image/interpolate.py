@@ -44,9 +44,9 @@ def transformed(shape:tm.ivec2, p:tm.ivec2, transform:ti.template()):
     return tm.ivec2(p.y, shape.x - p.x - 1)
   elif ti.static(transform == ImageTransform.transpose):
     return tm.ivec2(p.y, p.x)
-  elif ti.static(transform == ImageTransform.flip_horiz):
-    return tm.ivec2(shape.x - p.x - 1, p.y)
   elif ti.static(transform == ImageTransform.flip_vert):
+    return tm.ivec2(shape.x - p.x - 1, p.y)
+  elif ti.static(transform == ImageTransform.flip_horiz):
     return tm.ivec2(p.x, shape.y - p.y - 1)
   elif ti.static(transform == ImageTransform.transverse):
     return tm.ivec2(shape.y - p.y - 1, shape.x - p.x - 1)
@@ -119,3 +119,14 @@ def scale_bilinear(src, scale, transform:ImageTransform=ImageTransform.none, dty
 
 
 
+def transform(src, transform:ImageTransform=ImageTransform.none, dtype=None):
+  if dtype is None:
+    dtype = types.ti_type(src)
+
+  size = src.shape[:2]
+  size = transformed_size(size, transform)
+
+  dst = types.empty_like(src, (size[1], size[0], 3), dtype)
+  f = bilinear_kernel(types.ti_type(src), dtype)
+  f(src, dst, tm.vec2(1.0), transform)
+  return dst

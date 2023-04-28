@@ -20,13 +20,16 @@ import taichi as ti
 
 
 class Processor:
-  def __init__(self, image_size):
-    self.isp = camera_isp.Camera16(bayer.BayerPattern.RGGB, moving_alpha=0.1, resize_width=3072, transform=ImageTransform.rotate_90)
-    self.image_size = image_size
+  def __init__(self):
+    self.isp = camera_isp.Camera16(bayer.BayerPattern.RGGB, moving_alpha=0.1)
+    self.stream =  torch.cuda.Stream()
 
   def __call__(self, image):
-    next = self.isp.load_packed12(image)
-    return self.isp.tonemap_reinhard(next, gamma=0.6)
+    with torch.cuda.stream(self.stream):
+      
+      next = self.isp.load_packed12(image)
+      out =  self.isp.tonemap_reinhard(next, gamma=0.6)
+      return out
 
 
 def main():
@@ -45,23 +48,21 @@ def main():
   h, w, _ = test_image.shape
 
   test_packed = torch.from_numpy(test_packed).to(device='cuda:0')
-  f = Processor(image_size=(h, w))
-  
-  benchmark("camera_isp", 
-    f, [test_packed], 
-    iterations=1000, warmup=100)   
-  
-  
-  # results = [pool.apply_async(f, args=[test_images]) for i in range(n)]
+  f1 = Processor()
+  f2 = Processor()
 
-  # for x in tqdm(results):
-  #   y = x.get()
-  #   del y
-  #   torch.cuda.empty_cache()
+  for i in tqdm(range(1000)):  
+    out = f1(test_packed)
+    # out2 = f2(test_packed)
 
-  # pool.close()
-  # pool.join()
-   
+  
+  # benchmark("camera_isp", 
+  #   f, [test_packed], 
+  #   iterations=1000, warmup=100)   
+  
+  
+
+
 
 
 if __name__ == '__main__':
