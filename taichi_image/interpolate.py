@@ -59,8 +59,8 @@ def bilinear_func(src: ti.template(), dst: ti.template(),
                   scale: ti.f32, intensity_scale: ti.f32,  transform:ti.template(), out_dtype:ti.template()):
   
   for I in ti.grouped(dst):
-    # p = transformed(tm.ivec2(dst.shape), ti.cast(I, ti.f32), transform) / scale
-    p = ti.cast(I, ti.f32) / scale
+    p = ti.cast(transformed(tm.ivec2(dst.shape), I, transform), ti.f32) / scale
+    # p = ti.cast(I, ti.f32) / scale
     dst[I] = ti.cast(sample_bilinear(src, p) * intensity_scale, out_dtype)
 
 

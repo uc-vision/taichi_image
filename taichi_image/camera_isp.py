@@ -237,7 +237,6 @@ def camera_isp(name:str, dtype=ti.f32):
       return self.resize_image(rgb) 
 
 
-
     @beartype
     def tonemap_reinhard(self, images:List[torch.Tensor], 
                          gamma:float=1.0, intensity:float=1.0, light_adapt:float=1.0, color_adapt:float=0.0):
