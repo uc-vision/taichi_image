@@ -82,10 +82,33 @@ def camera_isp(name:str, dtype=ti.f32):
       self.mean /= ti.f32(n)
       self.rgb_mean /= ti.f32(n)
 
+  def image_bounds(image):
+    return torch.concatenate([image.min().view(1), image.max().view(1)])
+
+  @torch.compile
+  def torch_metering(image, bounds):
+    weights = torch.tensor([0.299, 0.587, 0.114], dtype=torch_dtype, device=image.device)
+    
+    image = (image - bounds[0]) / (bounds[1] - bounds[0])
+    grey = torch.einsum('ijk,k -> ij', image, weights)
+    grey_mean = grey.mean()
+
+    log_grey = torch.log(torch.clamp(grey, min=1e-4))
+
+    return torch.concatenate([bounds,
+      log_grey.min().view(1), log_grey.max().view(1),
+                  log_grey.mean().view(1), grey_mean.view(1), image.mean(dim=(0, 1))], dim=0)
+  
+
+  def linear_output(image, gamma=1.0):
+    upper = torch.max(image)
+    linear = 255 * (image / upper).pow(1/gamma)
+    return linear.to(torch.uint8)
+
 
   @ti.func
   def metering_from_vec(vec: ti.template()) -> Metering:
-    return Metering(Bounds(vec[0], vec[1]), Bounds(vec[2], vec[3]), vec[4], vec[5], vec[6:9])
+    return Metering(Bounds(vec[0], vec[1]), Bounds(vec[2], vec[3]), vec[4], vec[5], tm.vec3(vec[6], vec[7], vec[8]))
 
   @ti.kernel
   def metering_kernel(image: ti.types.ndarray(dtype=vec_dtype, ndim=2)) -> vec9:
@@ -106,21 +129,10 @@ def camera_isp(name:str, dtype=ti.f32):
     return stats.to_vec()
 
 
-
-  # @ti.kernel
-  # def reinhard_kernel(image: ti.types.ndarray(dtype=vec_dtype, ndim=2), 
-  #           dest: ti.types.ndarray(dtype=ti.types.vector(3, ti.u8), ndim=2),
-  #           metering : vec9,
-  #                     gamma:ti.f32, 
-  #                     intensity:ti.f32, 
-  #                     light_adapt:ti.f32, 
-  #                     color_adapt:ti.f32) -> vec9:
     
   @ti.kernel
   def reinhard_kernel(image: ti.types.ndarray(dtype=vec_dtype, ndim=2), 
-          dest: ti.types.ndarray(dtype=ti.types.vector(3, ti.u8), ndim=2),
-          metering : vec9,
-                    gamma:ti.template(), 
+          metering : ti.types.ndarray(dtype=ti.f32, ndim=1),
                     intensity:ti.template(),
                     light_adapt:ti.template(),
                     color_adapt:ti.template()):
@@ -133,15 +145,10 @@ def camera_isp(name:str, dtype=ti.f32):
     key = (log_b.max - stats.log_mean) / (log_b.max - log_b.min)
     map_key = 0.3 + 0.7 * tm.pow(key, 1.4)
 
-    next_stats = Metering(Bounds(np.inf, -np.inf), Bounds(np.inf, -np.inf), 0, 0, tm.vec3(0, 0, 0))
-    out_bounds = Bounds(np.inf, -np.inf)
-
     mean = lerp(color_adapt, stats.mean, stats.rgb_mean)
     for i in ti.grouped(ti.ndrange(image.shape[0], image.shape[1])):
   
       scaled =  (image[i] - b.min) / (b.max - b.min)
-      next_stats.accum(image[i], scaled)
-
       gray = rgb_gray(scaled)
       
       # Blend between gray value and RGB value
@@ -152,15 +159,10 @@ def camera_isp(name:str, dtype=ti.f32):
       adapt = tm.pow(tm.exp(-intensity) * adapt_mean, map_key)
 
       p = scaled * (1.0 / (adapt + scaled))
-      for k in ti.static(range(3)):
-        out_bounds.expand(p[k])
 
       image[i] = ti.cast(p, dtype)
 
-    tonemap.linear_func(image, dest, out_bounds, gamma, 255, ti.u8)
 
-    next_stats.normalise(image.shape[0] * image.shape[1])
-    # return next_stats.to_vec()
 
 
 
@@ -258,20 +260,18 @@ def camera_isp(name:str, dtype=ti.f32):
       self.moving_metrics = moving_average(self.moving_metrics, mean_metrics, self.moving_alpha)
       return self.moving_metrics
         
+
     
     def tonemap_reinhard(self, cfa, gamma=1.0, intensity=1.0, light_adapt=1.0, color_adapt=0.0):
       rgb = bayer.bayer_to_rgb(cfa)
       image = self.resize_image(rgb) 
 
+      # output = torch.empty_like(image, dtype=torch.uint8, device=self.device) 
+      bounds = image_bounds(image)
+      self.metrics = torch_metering(image, bounds)
 
-      output = torch.empty_like(image, dtype=torch.uint8, device=self.device) 
-
-      # if self.metrics is None:
-      self.metrics = metering_kernel(image)
-
-      # self.metrics = 
-      # reinhard_kernel(image, output, self.metrics, gamma, intensity, light_adapt, color_adapt)
-      return image
+      reinhard_kernel(image, self.metrics, intensity, light_adapt, color_adapt)
+      return linear_output(image, gamma)
     
 
 

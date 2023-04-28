@@ -22,14 +22,12 @@ import taichi as ti
 class Processor:
   def __init__(self):
     self.isp = camera_isp.Camera16(bayer.BayerPattern.RGGB, moving_alpha=0.1, resize_width=64)
-    self.stream =  torch.cuda.Stream()
 
   def __call__(self, image):
-    with torch.cuda.stream(self.stream):
       
-      next = self.isp.load_packed12(image)
-      out =  self.isp.tonemap_reinhard(next, gamma=0.6)
-      return out
+    next = self.isp.load_packed12(image)
+    out =  self.isp.tonemap_reinhard(next, gamma=0.6)
+    return out
 
 
 def main():
@@ -37,7 +35,6 @@ def main():
   # parser.add_argument("image", type=str)
   # add_taichi_args(parser)
   # args = parser.parse_args()
-
   args = init_with_args()
 
 
@@ -48,16 +45,13 @@ def main():
   h, w, _ = test_image.shape
 
   test_packed = torch.from_numpy(test_packed).to(device='cuda:0')
-  f1 = Processor()
-  f2 = Processor()
+  processors = [Processor() for i in range(6)]
 
-  for i in tqdm(range(1000)):  
-    out = f1(test_packed)
-    out2 = f2(test_packed)
+  for i in tqdm(range(10000)):  
+    out = [p(test_packed) for p in processors]
 
-  f1.stream.synchronize()
-  f2.stream.synchronize()
-  
+
+  torch.cuda.synchronize()
   # benchmark("camera_isp", 
   #   f, [test_packed], 
   #   iterations=1000, warmup=100)   
@@ -68,4 +62,5 @@ def main():
 
 
 if __name__ == '__main__':
-  main()
+  with torch.inference_mode():
+    main()
