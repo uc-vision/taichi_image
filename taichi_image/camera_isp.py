@@ -39,16 +39,9 @@ def metering_images(images, t, prev, stride=8):
     images = torch.concatenate([image[::stride, ::stride, :] for image in images], 0)
     bounds = image_bounds(images)
 
-    # images_bounds = torch.stack([image_bounds(image) for image in images])
-    # bounds = torch.concatenate([images_bounds[:, 0].min().view(1), 
-    #                             images_bounds[:, 1].max().view(1)])
-
     new_bounds = t * prev[:2] + (1.0 - t) * bounds
 
-    # image_stats = torch.stack([metering(image, new_bounds) for image in images])
-    # stats = image_stats.mean(dim=0)
     stats = metering(images, new_bounds)
-
     new_stats = t * prev[2:] + (1.0 - t) * stats
     return torch.concatenate([new_bounds, new_stats])
 
@@ -104,15 +97,18 @@ def camera_isp(name:str, dtype=ti.f32):
     
   @ti.kernel
   def reinhard_kernel(image: ti.types.ndarray(dtype=vec_dtype, ndim=2), 
+          output : ti.types.ndarray(dtype=ti.types.vector(3, ti.u8), ndim=2),
           metering : ti.types.ndarray(dtype=ti.f32, ndim=1),
+                    gamma: ti.template(),
                     intensity:ti.template(),
                     light_adapt:ti.template(),
                     color_adapt:ti.template()):
     
-
     stats = metering_from_vec(metering)
     log_b = stats.log_bounds
     b = stats.bounds
+
+    max_out = ti.f32(np.inf)
 
     key = (log_b.max - stats.log_mean) / (log_b.max - log_b.min)
     map_key = 0.3 + 0.7 * tm.pow(key, 1.4)
@@ -132,6 +128,12 @@ def camera_isp(name:str, dtype=ti.f32):
 
       p = scaled * (1.0 / (adapt + scaled))
       image[i] = ti.cast(p, dtype)
+
+      max_out = ti.atomic_max(max_out, p.max())
+
+    for i in ti.grouped(ti.ndrange(image.shape[0], image.shape[1])):
+      p = tm.pow(image[i] / max_out, 1.0 / gamma)
+      output[i] = ti.cast(255 * p, ti.u8)
 
 
 
@@ -245,10 +247,13 @@ def camera_isp(name:str, dtype=ti.f32):
       else:
         self.metrics = metering_images(images, self.moving_alpha, self.metrics, self.metering_stride)
 
-      for image in images:
-        reinhard_kernel(image, self.metrics, intensity, light_adapt, color_adapt)
+
+      outputs = [torch.empty(image.shape, dtype=torch.uint8, device=self.device) for image in images]
+      for output, image in zip(outputs, images):
+        reinhard_kernel(image, output, self.metrics, gamma, intensity, light_adapt, color_adapt)
       
-      return [linear_output(image, gamma) for image in images]
+      return outputs
+      # return [linear_output(image, gamma) for image in images]
     
 
 

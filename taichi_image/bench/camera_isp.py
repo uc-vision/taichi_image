@@ -21,7 +21,7 @@ import taichi as ti
 
 class Processor:
   def __init__(self):
-    self.isp = camera_isp.Camera16(bayer.BayerPattern.RGGB, moving_alpha=0.1, resize_width=3072)
+    self.isp = camera_isp.Camera16(bayer.BayerPattern.RGGB, moving_alpha=0.1, resize_width=3072, transform=ImageTransform.rotate_270)
 
   def __call__(self, images):
       
@@ -31,15 +31,8 @@ class Processor:
 
 
 def main():
-  # parser = argparse.ArgumentParser()
-  # parser.add_argument("image", type=str)
-  # add_taichi_args(parser)
-  # args = parser.parse_args()
   args = init_with_args()
 
-
-  # pool = Pool(1, initializer=partial(ti.init, arch=ti.cuda, device_memory_GB=0.5))
-  # test_images, test_image = pool.apply(load_test_image, args=[args.image, 6, bayer.BayerPattern.RGGB])
 
   test_packed, test_image = load_test_image(args.image,  bayer.BayerPattern.RGGB)
   h, w, _ = test_image.shape
@@ -54,12 +47,6 @@ def main():
 
 
   torch.cuda.synchronize()
-  # benchmark("camera_isp", 
-  #   f, [test_packed], 
-  #   iterations=1000, warmup=100)   
-  
-  
-
 
 
 
