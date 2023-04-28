@@ -17,9 +17,21 @@ def moving_average(old, new, alpha):
   return (1 - alpha) * old + alpha * new
 
 
-# def expand_bounds(b:Bounds, x:ti.f32):
-#   ti.atomic_min(b.min, x)
-#   ti.atomic_max(b.max, x)
+def image_bounds(image):
+  return torch.concatenate([image.min().view(1), image.max().view(1)])
+
+def metering(image, bounds):
+  weights = torch.tensor([0.299, 0.587, 0.114], dtype=image.dtype, device=image.device)
+  
+  image = (image - bounds[0]) / (bounds[1] - bounds[0])
+  grey = torch.einsum('ijk,k -> ij', image, weights)
+  grey_mean = grey.mean()
+
+  log_grey = torch.log(torch.clamp(grey, min=1e-4))
+
+  return torch.concatenate([bounds,
+    log_grey.min().view(1), log_grey.max().view(1),
+                log_grey.mean().view(1), grey_mean.view(1), image.mean(dim=(0, 1))], dim=0)
 
 
 def camera_isp(name:str, dtype=ti.f32):
@@ -56,48 +68,10 @@ def camera_isp(name:str, dtype=ti.f32):
     @ti.func
     def to_vec(self):
       return vec9(
-        self.bounds.min, self.bounds.max,
         self.log_bounds.min, self.log_bounds.max,
                     self.log_mean, self.mean, *self.rgb_mean)
 
-    @ti.func 
-    def accum(self, rgb:tm.vec3, scaled:tm.vec3):
-      gray = ti.f32(rgb_gray(scaled))
-      log_gray = tm.log(tm.max(gray, 1e-4))
 
-      ti.atomic_min(self.log_bounds.min, log_gray)
-      ti.atomic_max(self.log_bounds.max, log_gray)
-
-      for i in ti.static(range(3)):
-        ti.atomic_min(self.bounds.min, rgb[i])
-        ti.atomic_max(self.bounds.max, rgb[i])
-
-      self.log_mean += log_gray
-      self.mean += gray
-      self.rgb_mean += scaled
-
-    @ti.func
-    def normalise(self, n:ti.i32):
-      self.log_mean /= ti.f32(n)
-      self.mean /= ti.f32(n)
-      self.rgb_mean /= ti.f32(n)
-
-  def image_bounds(image):
-    return torch.concatenate([image.min().view(1), image.max().view(1)])
-
-  @torch.compile(backend="cudagraphs")
-  def torch_metering(image, bounds):
-    weights = torch.tensor([0.299, 0.587, 0.114], dtype=torch_dtype, device=image.device)
-    
-    image = (image - bounds[0]) / (bounds[1] - bounds[0])
-    grey = torch.einsum('ijk,k -> ij', image, weights)
-    grey_mean = grey.mean()
-
-    log_grey = torch.log(torch.clamp(grey, min=1e-4))
-
-    return torch.concatenate([bounds,
-      log_grey.min().view(1), log_grey.max().view(1),
-                  log_grey.mean().view(1), grey_mean.view(1), image.mean(dim=(0, 1))], dim=0)
   
   
   def linear_output(image, gamma=1.0):
@@ -109,24 +83,6 @@ def camera_isp(name:str, dtype=ti.f32):
   @ti.func
   def metering_from_vec(vec: ti.template()) -> Metering:
     return Metering(Bounds(vec[0], vec[1]), Bounds(vec[2], vec[3]), vec[4], vec[5], tm.vec3(vec[6], vec[7], vec[8]))
-
-  @ti.kernel
-  def metering_kernel(image: ti.types.ndarray(dtype=vec_dtype, ndim=2)) -> vec9:
-                      
-    bounds = Bounds(np.inf, -np.inf)
-    for i, j in ti.ndrange(image.shape[0], image.shape[1]):
-      for k in ti.static(range(3)):
-        bounds.expand(image[i, j][k])
-
-
-    stats = Metering(Bounds(np.inf, -np.inf), Bounds(np.inf, -np.inf), 0, 0, tm.vec3(0, 0, 0))      
-    for i, j in ti.ndrange(image.shape[0], image.shape[1]):
-      scaled = bounds.scale_range(image[i, j])
-      stats.accum(image[i, j], scaled)
-
-
-    stats.normalise(image.shape[0] * image.shape[1])
-    return stats.to_vec()
 
 
     
@@ -159,12 +115,7 @@ def camera_isp(name:str, dtype=ti.f32):
       adapt = tm.pow(tm.exp(-intensity) * adapt_mean, map_key)
 
       p = scaled * (1.0 / (adapt + scaled))
-
       image[i] = ti.cast(p, dtype)
-
-
-
-
 
 
 
@@ -260,15 +211,23 @@ def camera_isp(name:str, dtype=ti.f32):
       self.moving_metrics = moving_average(self.moving_metrics, mean_metrics, self.moving_alpha)
       return self.moving_metrics
         
-
-    
-    def tonemap_reinhard(self, cfa, gamma=1.0, intensity=1.0, light_adapt=1.0, color_adapt=0.0):
+    def _process_image(self, cfa):
       rgb = bayer.bayer_to_rgb(cfa)
-      image = self.resize_image(rgb) 
+      return self.resize_image(rgb) 
 
-      # output = torch.empty_like(image, dtype=torch.uint8, device=self.device) 
-      bounds = image_bounds(image)
-      self.metrics = torch_metering(image, bounds)
+    def _metering(images):
+        images_bounds = torch.stack([image_bounds(image) for image in images])
+        bounds = torch.concatenate([images_bounds[:, 0].min().view(1), images_bounds[:, 1].max().view(1)])
+
+
+
+
+
+    def tonemap_reinhard(self, cfa_images, gamma=1.0, intensity=1.0, light_adapt=1.0, color_adapt=0.0):
+      images = [self._process_image(cfa) for cfa in cfa_images]
+
+
+
 
       reinhard_kernel(image, self.metrics, intensity, light_adapt, color_adapt)
       return linear_output(image, gamma)
