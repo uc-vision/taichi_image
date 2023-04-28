@@ -29,17 +29,20 @@ def load_test_images(filename, num_cameras, pattern = bayer.BayerPattern.RGGB):
 def main():
   args = init_with_args()
 
-  raw_image, test_image = load_test_image(args.image, pattern = bayer.BayerPattern.RGGB)
+
+  test_packed, test_image = load_test_image(args.image, pattern = bayer.BayerPattern.RGGB)
+
+  test_images = [torch.from_numpy(test_packed).clone() for _ in range(6)]
   isp = camera_isp.Camera32(bayer.BayerPattern.RGGB, moving_alpha=1.0, resize_width=1280)
 
   
-  image = isp.load_packed12(torch.from_numpy(raw_image)) 
-  outputs = isp.tonemap_reinhard(image, gamma=0.6)
+  images = [isp.load_packed12(image) for image in test_images] 
+  outputs = isp.tonemap_reinhard(images, gamma=0.6)
 
 
 
   if args.show:
-    display_rgb("test", outputs)
+    display_rgb("test", outputs[0])
 
 
 if __name__ == '__main__':
