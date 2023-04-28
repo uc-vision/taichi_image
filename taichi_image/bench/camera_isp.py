@@ -21,7 +21,7 @@ import taichi as ti
 
 class Processor:
   def __init__(self):
-    self.isp = camera_isp.Camera16(bayer.BayerPattern.RGGB, moving_alpha=0.1)
+    self.isp = camera_isp.Camera16(bayer.BayerPattern.RGGB, moving_alpha=0.1, resize_width=64)
     self.stream =  torch.cuda.Stream()
 
   def __call__(self, image):
@@ -53,8 +53,10 @@ def main():
 
   for i in tqdm(range(1000)):  
     out = f1(test_packed)
-    # out2 = f2(test_packed)
+    out2 = f2(test_packed)
 
+  f1.stream.synchronize()
+  f2.stream.synchronize()
   
   # benchmark("camera_isp", 
   #   f, [test_packed], 

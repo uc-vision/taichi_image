@@ -123,7 +123,7 @@ def camera_isp(name:str, dtype=ti.f32):
                     gamma:ti.template(), 
                     intensity:ti.template(),
                     light_adapt:ti.template(),
-                    color_adapt:ti.template()) -> vec9:
+                    color_adapt:ti.template()):
     
 
     stats = metering_from_vec(metering)
@@ -160,7 +160,9 @@ def camera_isp(name:str, dtype=ti.f32):
     tonemap.linear_func(image, dest, out_bounds, gamma, 255, ti.u8)
 
     next_stats.normalise(image.shape[0] * image.shape[1])
-    return next_stats.to_vec()
+    # return next_stats.to_vec()
+
+
 
 
 
@@ -261,13 +263,17 @@ def camera_isp(name:str, dtype=ti.f32):
       rgb = bayer.bayer_to_rgb(cfa)
       image = self.resize_image(rgb) 
 
+
       output = torch.empty_like(image, dtype=torch.uint8, device=self.device) 
 
-      if self.metrics is None:
-        self.metrics = metering_kernel(image)
+      # if self.metrics is None:
+      self.metrics = metering_kernel(image)
 
-      self.metrics = reinhard_kernel(image, output, self.metrics, gamma, intensity, light_adapt, color_adapt)
-      return output
+      # self.metrics = 
+      # reinhard_kernel(image, output, self.metrics, gamma, intensity, light_adapt, color_adapt)
+      return image
+    
+
 
   ISP.__qualname__ = name
   return ISP
