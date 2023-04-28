@@ -21,7 +21,7 @@ import taichi as ti
 
 class Processor:
   def __init__(self):
-    self.isp = camera_isp.Camera16(bayer.BayerPattern.RGGB, moving_alpha=0.1, resize_width=64)
+    self.isp = camera_isp.Camera16(bayer.BayerPattern.RGGB, moving_alpha=0.1, resize_width=3072)
 
   def __call__(self, images):
       
