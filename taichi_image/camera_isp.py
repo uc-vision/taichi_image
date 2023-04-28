@@ -35,8 +35,8 @@ def metering(image, bounds):
                 log_grey.mean().view(1), grey_mean.view(1), image.mean(dim=(0, 1))], dim=0)
 
 @torch.compile
-def metering_images(images, t, prev):
-    images = torch.concatenate([image[::8, ::8, :] for image in images], 0)
+def metering_images(images, t, prev, stride=8):
+    images = torch.concatenate([image[::stride, ::stride, :] for image in images], 0)
     bounds = image_bounds(images)
 
     # images_bounds = torch.stack([image_bounds(image) for image in images])
@@ -142,7 +142,8 @@ def camera_isp(name:str, dtype=ti.f32):
                   scale:Optional[float]=None, resize_width:int=0,
                  moving_alpha=0.1, 
                  transform:interpolate.ImageTransform=interpolate.ImageTransform.none,
-                 device:torch.device = torch.device('cuda', 0)):
+                 device:torch.device = torch.device('cuda', 0),
+                 metering_stride:int=8):
       
       assert scale is None or resize_width == 0, "Cannot specify both scale and resize_width"    
   
@@ -151,6 +152,7 @@ def camera_isp(name:str, dtype=ti.f32):
       self.scale = scale
       self.resize_width = resize_width
       self.transform = transform
+      self.metering_stride = metering_stride
 
       self.metrics = None
       self.device = device
@@ -239,9 +241,9 @@ def camera_isp(name:str, dtype=ti.f32):
       images = [self._process_image(cfa) for cfa in cfa_images]
 
       if self.metrics is None:
-        self.metrics = metering_images(images, 0.0, torch.zeros(3, dtype=torch_dtype, device=self.device))
+        self.metrics = metering_images(images, 0.0, torch.zeros(3, dtype=torch_dtype, device=self.device), self.metering_stride)
       else:
-        self.metrics = metering_images(images, self.moving_alpha, self.metrics)
+        self.metrics = metering_images(images, self.moving_alpha, self.metrics, self.metering_stride)
 
       for image in images:
         reinhard_kernel(image, self.metrics, intensity, light_adapt, color_adapt)
