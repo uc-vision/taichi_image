@@ -27,7 +27,7 @@ class Processor:
       
     next = [self.isp.load_packed12(image) for image in images]
     out =  self.isp.tonemap_reinhard(next, gamma=0.6)
-    return next
+    return out
 
 
 def main():
