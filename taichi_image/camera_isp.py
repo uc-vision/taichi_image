@@ -4,6 +4,9 @@ import taichi as ti
 import taichi.math as tm
 from taichi_image.types import empty_like, ti_to_torch
 import torch
+import torch.nn.functional as F
+
+from taichi_image.util import Bounds, lerp, vec9, rgb_gray
 
 from . import tonemap, interpolate, bayer, packed
 import numpy as np
@@ -15,13 +18,60 @@ def moving_average(old, new, alpha):
   return (1 - alpha) * old + alpha * new
 
 
+def image_bounds(image):
+  return torch.concatenate([image.min().view(1), image.max().view(1)])
+
+def metering(image, bounds):
+  weights = torch.tensor([0.299, 0.587, 0.114], dtype=image.dtype, device=image.device)
+  
+  image = (image - bounds[0]) / (bounds[1] - bounds[0])
+  grey = torch.einsum('ijk,k -> ij', image, weights)
+  grey_mean = grey.mean()
+
+  log_grey = torch.log(torch.clamp(grey, min=1e-4))
+
+  return torch.concatenate([
+    log_grey.min().view(1), log_grey.max().view(1),
+                log_grey.mean().view(1), grey_mean.view(1), image.mean(dim=(0, 1))], dim=0)
+
+@torch.compile
+def metering_images(images, t, prev, stride=8):
+    images = torch.concatenate([image[::stride, ::stride, :] for image in images], 0)
+    bounds = image_bounds(images)
+
+    new_bounds = t * prev[:2] + (1.0 - t) * bounds
+
+    stats = metering(images, new_bounds)
+    new_stats = t * prev[2:] + (1.0 - t) * stats
+
+    return torch.concatenate([new_bounds, new_stats])
+
+
+def transform(image:torch.Tensor, transform:interpolate.ImageTransform):
+  if transform == interpolate.ImageTransform.none:
+    return image
+  elif transform == interpolate.ImageTransform.rotate_90:
+    return torch.rot90(image, 1, (0, 1)).contiguous()
+  elif transform == interpolate.ImageTransform.rotate_180:
+    return torch.rot90(image, 2, (0, 1)).contiguous()
+  elif transform == interpolate.ImageTransform.rotate_270:
+    return torch.rot90(image, 3, (0, 1)).contiguous()
+  elif transform == interpolate.ImageTransform.flip_horiz:
+    return torch.flip(image, (1,)).contiguous()
+  elif transform == interpolate.ImageTransform.flip_vert:
+    return torch.flip(image, (0,)).contiguous()
+  elif transform == interpolate.ImageTransform.transverse:
+    return torch.flip(image, (0, 1)).contiguous()
+  elif transform == interpolate.ImageTransform.transpose:
+    return torch.transpose(image, 0, 1).contiguous()
+
+
 def camera_isp(name:str, dtype=ti.f32):
   decode12_kernel = packed.decode12_kernel(dtype, scaled=True)
   decode16_kernel = packed.decode16_kernel(dtype, scaled=True)
 
   torch_dtype = ti_to_torch[dtype]
   vec_dtype = ti.types.vector(3, dtype)
-  vec7 = ti.types.vector(7, ti.f32)
 
 
   @ti.kernel
@@ -37,41 +87,74 @@ def camera_isp(name:str, dtype=ti.f32):
     for i in ti.grouped(image):
       out[i] = ti.cast(image[i], dtype)
 
-  @ti.kernel 
-  def  bounds_kernel(image: ti.types.ndarray(dtype=vec_dtype, ndim=2)) -> tonemap.Bounds:
-    return tonemap.bounds_func(image)
 
-  @ti.kernel
-  def linear_kernel(image: ti.types.ndarray(dtype=ti.types.vector(3, ti.u8), ndim=2),
-                    output:ti.types.ndarray(dtype=vec_dtype, ndim=2),
-                    bounds:tm.vec2, gamma:ti.f32):
-    tonemap.linear_func(image, output,tonemap.bounds_from_vec(bounds), gamma, 255, ti.u8)
+  @ti.dataclass
+  class Metering:
+    bounds : Bounds
+    log_bounds: Bounds
+    log_mean: ti.f32
+    mean: ti.f32
+    rgb_mean: tm.vec3
 
-  # @ti.kernel
-  # def reinhard_kernel(image: ti.types.ndarray(dtype=vec_dtype, ndim=2),
-  #                     output:ti.types.ndarray(dtype=ti.types.vector(3, ti.u8), ndim=2),
-  #                     bounds:tm.vec2,
-  #                     metrics:vec7,
-  #                     gamma:ti.f32, intensity:ti.f32,
-  #                     light_adapt:ti.f32, color_adapt:ti.f32):
+    @ti.func
+    def to_vec(self):
+      return vec9(
+        self.log_bounds.min, self.log_bounds.max,
+                    self.log_mean, self.mean, *self.rgb_mean)
+  
+  @torch.compile
+  def linear_output(image, gamma=1.0):
+    upper = torch.max(image)
+    linear = 255 * (image / upper).pow(1/gamma)
+    return linear.to(torch.uint8)
+
+
+  @ti.func
+  def metering_from_vec(vec: ti.template()) -> Metering:
+    return Metering(Bounds(vec[0], vec[1]), Bounds(vec[2], vec[3]), vec[4], vec[5], tm.vec3(vec[6], vec[7], vec[8]))
+
+
     
   @ti.kernel
-  def reinhard_kernel(image: ti.types.ndarray(dtype=vec_dtype, ndim=2),
-                      output:ti.types.ndarray(dtype=ti.types.vector(3, ti.u8), ndim=2),
-                      bounds:tm.vec2,
-                      metrics:vec7,
-                      gamma:ti.template(), intensity:ti.template(),
-                      light_adapt:ti.template(), color_adapt:ti.template()):
-    tonemap.reinhard_func(image, tonemap.bounds_from_vec(bounds), tonemap.metering_from_vec(metrics), 
-                          intensity, light_adapt, color_adapt, dtype)
+  def reinhard_kernel(image: ti.types.ndarray(dtype=vec_dtype, ndim=2), 
+          output : ti.types.ndarray(dtype=ti.types.vector(3, ti.u8), ndim=2),
+          metering : ti.types.ndarray(dtype=ti.f32, ndim=1),
+                    gamma: ti.template(),
+                    intensity:ti.template(),
+                    light_adapt:ti.template(),
+                    color_adapt:ti.template()):
     
-    after_bounds = tonemap.bounds_func(image)
-    tonemap.linear_func(image, output, after_bounds, gamma, 255, ti.u8)
+    stats = metering_from_vec(metering)
+    log_b = stats.log_bounds
+    b = stats.bounds
 
+    max_out = ti.f32(np.inf)
 
-  @ti.kernel
-  def metering_kernel(image: ti.types.ndarray(dtype=vec_dtype, ndim=2), bounds:tm.vec2) -> vec7:
-    return tonemap.metering_func(image, tonemap.bounds_from_vec(bounds)).to_vec()
+    key = (log_b.max - stats.log_mean) / (log_b.max - log_b.min)
+    map_key = 0.3 + 0.7 * tm.pow(key, 1.4)
+
+    mean = lerp(color_adapt, stats.mean, stats.rgb_mean)
+    for i in ti.grouped(ti.ndrange(image.shape[0], image.shape[1])):
+  
+      scaled =  (image[i] - b.min) / (b.max - b.min)
+      gray = rgb_gray(scaled)
+      
+      # Blend between gray value and RGB value
+      adapt_color = lerp(color_adapt, tm.vec3(gray), scaled)
+
+      # Blend between mean and local adaptation
+      adapt_mean = lerp(light_adapt, mean, adapt_color)
+      adapt = tm.pow(tm.exp(-intensity) * adapt_mean, map_key)
+
+      p = scaled * (1.0 / (adapt + scaled))
+      image[i] = ti.cast(p, dtype)
+
+      max_out = ti.atomic_max(max_out, p.max())
+
+    for i in ti.grouped(ti.ndrange(image.shape[0], image.shape[1])):
+      p = tm.pow(image[i] / max_out, 1.0 / gamma)
+      output[i] = ti.cast(255 * p, ti.u8)
+
 
 
   @ti.data_oriented
@@ -81,7 +164,9 @@ def camera_isp(name:str, dtype=ti.f32):
                   scale:Optional[float]=None, resize_width:int=0,
                  moving_alpha=0.1, 
                  transform:interpolate.ImageTransform=interpolate.ImageTransform.none,
-                 device:torch.device = torch.device('cuda', 0)):
+                 device:torch.device = torch.device('cuda', 0),
+                 metering_stride:int=8):
+      
       assert scale is None or resize_width == 0, "Cannot specify both scale and resize_width"    
   
       self.bayer_pattern = bayer_pattern
@@ -89,9 +174,9 @@ def camera_isp(name:str, dtype=ti.f32):
       self.scale = scale
       self.resize_width = resize_width
       self.transform = transform
+      self.metering_stride = metering_stride
 
-      self.moving_bounds = None
-      self.moving_metrics = None
+      self.metrics = None
       self.device = device
 
     @beartype
@@ -116,17 +201,16 @@ def camera_isp(name:str, dtype=ti.f32):
 
     def resize_image(self, image):
       w, h = image.shape[1], image.shape[0]
-      if self.scale is not None:
-
-        output_size = (round(w * self.scale), round(h * self.scale))
-        return interpolate.resize_bilinear(image, output_size, self.scale, self.transform)
-
-      elif self.resize_width > 0 or self.transform != interpolate.ImageTransform.none:
+      if self.resize_width > 0:
 
         scale = self.resize_width / w 
         output_size = (self.resize_width, round(h * scale))
-        return interpolate.resize_bilinear(image, output_size, scale, self.transform)
+        return interpolate.resize_bilinear(image, output_size, scale)
+      elif self.scale is not None:
 
+        output_size = (round(w * self.scale), round(h * self.scale))
+        return interpolate.resize_bilinear(image, output_size, self.scale)
+      
       else:
         return image
 
@@ -134,71 +218,61 @@ def camera_isp(name:str, dtype=ti.f32):
     def load_16u(self, image):
       cfa = torch.empty(image.shape, dtype=torch_dtype, device=self.device)
       load_u16(image, cfa)
-      return cfa
+      return self._process_image(cfa)
 
     def load_16f(self, image):
       cfa = torch.empty(image.shape, dtype=torch_dtype, device=self.device)
       load_16f(image, cfa)
-      return cfa
+      return self._process_image(cfa)
 
     def load_packed12(self, image_data):
       w, h = (image_data.shape[1] * 2 // 3, image_data.shape[0])
 
       cfa = torch.empty(h, w, dtype=torch_dtype, device=self.device)    
       decode12_kernel(image_data.view(-1), cfa.view(-1))
-
-      return cfa
+      return self._process_image(cfa)
 
     def load_packed16(self, image_data):
       w, h = (image_data.shape[1] // 2, image_data.shape[0])
 
       cfa = torch.empty(h, w, dtype=torch_dtype, device=self.device)    
       decode16_kernel(image_data.view(-1), cfa.view(-1))
-      return cfa
+      return self._process_image(cfa)
 
-    def updated_bounds(self, images):
-      bounds = tonemap.union_bounds([bounds_kernel(image) for image in images])
-
+    def updated_bounds(self, bounds:List[Bounds]):
+      bounds = tonemap.union_bounds(bounds)
       self.moving_bounds = moving_average(self.moving_bounds, tonemap.bounds_to_np(bounds), self.moving_alpha)
       return self.moving_bounds
     
-    def updated_metrics(self, images):
-      image_metrics = [metering_kernel(image, self.moving_bounds)
-                 for image in images]
-      
+    def updated_metrics(self, image_metrics:List[vec9]):    
       mean_metrics = sum(image_metrics) / len(image_metrics)
       self.moving_metrics = moving_average(self.moving_metrics, mean_metrics, self.moving_alpha)
       return self.moving_metrics
         
-
-    def _process_input(self, cfa):
+    def _process_image(self, cfa):
       rgb = bayer.bayer_to_rgb(cfa)
-      return self.resize_image(rgb)
+      resized = self.resize_image(rgb) 
+      return transform(resized, self.transform)
+      
 
-    def tonemap_linear(self, images, gamma=1.0):
-      images = [self._process_input(image) for image in images]
 
-      outputs = [torch.empty_like(image, dtype=torch.uint8, device=self.device) for image in images]
-      self.moving_bounds = self.updated_bounds(images)
+    @beartype
+    def tonemap_reinhard(self, images:List[torch.Tensor], 
+                         gamma:float=1.0, intensity:float=1.0, light_adapt:float=1.0, color_adapt:float=0.0):
 
-      for image, output in zip(images, outputs):
-        linear_kernel(image, output, tm.vec2(*self.moving_bounds), gamma)
+      if self.metrics is None:
+        self.metrics = metering_images(images, 0.0, torch.zeros(3, dtype=torch_dtype, device=self.device), self.metering_stride)
+      else:
+        self.metrics = metering_images(images, (1.0 - self.moving_alpha), self.metrics, self.metering_stride)
+
+      outputs = [torch.empty(image.shape, dtype=torch.uint8, device=self.device) for image in images]
+      for output, image in zip(outputs, images):
+        reinhard_kernel(image, output, self.metrics, gamma, intensity, light_adapt, color_adapt)
       
       return outputs
+      # return [linear_output(image, gamma) for image in images]
     
-    def tonemap_reinhard(self, images, gamma=1.0, intensity=1.0, light_adapt=1.0, color_adapt=0.0):
-      images = [self._process_input(image) for image in images]
 
-      self.moving_bounds = self.updated_bounds(images)
-      self.moving_metrics = self.updated_metrics(images)
-
-      outputs = [torch.empty_like(image, dtype=torch.uint8, device=self.device) for image in images]
-      for image, output in zip(images, outputs):
-        reinhard_kernel(image, output, tm.vec2(*self.moving_bounds), self.moving_metrics, 
-                        gamma, intensity, light_adapt, color_adapt)
-        
-      del images
-      return outputs
 
   ISP.__qualname__ = name
   return ISP

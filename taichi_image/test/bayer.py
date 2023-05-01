@@ -25,6 +25,11 @@ cv2_to_rgb = dict(
 def make_bayer_images(rgb_image):
   return {pattern.name:rgb_to_bayer(rgb_image, pattern) for pattern in BayerPattern }
   
+
+def load_rgb(filename):
+  image = cv2.imread(str(filename))
+  image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+  return image
   
 def display_rgb(k, rgb_image):
   if isinstance(rgb_image, torch.Tensor):

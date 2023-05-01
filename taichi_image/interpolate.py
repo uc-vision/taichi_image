@@ -44,9 +44,9 @@ def transformed(shape:tm.ivec2, p:tm.ivec2, transform:ti.template()):
     return tm.ivec2(p.y, shape.x - p.x - 1)
   elif ti.static(transform == ImageTransform.transpose):
     return tm.ivec2(p.y, p.x)
-  elif ti.static(transform == ImageTransform.flip_horiz):
-    return tm.ivec2(shape.x - p.x - 1, p.y)
   elif ti.static(transform == ImageTransform.flip_vert):
+    return tm.ivec2(shape.x - p.x - 1, p.y)
+  elif ti.static(transform == ImageTransform.flip_horiz):
     return tm.ivec2(p.x, shape.y - p.y - 1)
   elif ti.static(transform == ImageTransform.transverse):
     return tm.ivec2(shape.y - p.y - 1, shape.x - p.x - 1)
@@ -54,12 +54,14 @@ def transformed(shape:tm.ivec2, p:tm.ivec2, transform:ti.template()):
     return p
 
 
+
+
 @ti.func
 def bilinear_func(src: ti.template(), dst: ti.template(), 
-                  scale: ti.f32, intensity_scale: ti.f32,  transform:ti.template(), out_dtype:ti.template()):
+                  scale: ti.f32, intensity_scale: ti.f32,   out_dtype:ti.template()):
   
   for I in ti.grouped(dst):
-    p = transformed(tm.ivec2(dst.shape), ti.cast(I, ti.f32), transform) / scale
+    p = ti.cast(I, ti.f32) / scale
     dst[I] = ti.cast(sample_bilinear(src, p) * intensity_scale, out_dtype)
 
 
@@ -77,9 +79,26 @@ def bilinear_kernel(in_dtype=ti.u8, out_dtype=None):
   @ti.kernel
   def f(src: ti.types.ndarray(dtype=in_vec3, ndim=2), 
         dst: ti.types.ndarray(dtype=out_vec3, ndim=2),
-        scale: tm.vec2, transform:ti.template()):
-    bilinear_func(src, dst, scale, intensity_scale, transform, out_dtype)
+        scale: tm.vec2):
+    bilinear_func(src, dst, scale, intensity_scale,  out_dtype)
   return f
+
+
+@cache    
+def transform_kernel(dtype):
+  vec3 = ti.types.vector(3, dtype)
+
+  @ti.kernel
+  def f(src: ti.types.ndarray(dtype=vec3, ndim=2), 
+        dst: ti.types.ndarray(dtype=vec3, ndim=2),
+        transform:ti.template()):
+    for I in ti.grouped(dst):
+
+      p =  transformed(tm.ivec2(dst.shape), I, transform)
+      dst[I] = src[p]
+
+  return f
+
 
 
 def transformed_size(size, transform:ImageTransform):
@@ -89,32 +108,39 @@ def transformed_size(size, transform:ImageTransform):
   else:
     return (w, h)
 
+def transform(src, transform:ImageTransform):
+  size = transformed_size(src.shape[:2], transform)
+  dst = types.empty_like(src, (size[0], size[1], 3))
 
-def resize_bilinear(src, size, scale=None, transform:ImageTransform=ImageTransform.none, dtype=None):
+  f = transform_kernel(types.ti_type(src))
+  f(src, dst, transform)
+  return dst
+
+
+def resize_bilinear(src, size, scale=None, dtype=None):
   if dtype is None:
     dtype = types.ti_type(src)
 
   if scale is None:
     scale = tm.vec2(size) / tm.vec2(src.shape[:2])
 
-  size = transformed_size(size, transform)
 
   dst = types.empty_like(src, (size[1], size[0], 3), dtype)
   f = bilinear_kernel(types.ti_type(src), dtype)
-  f(src, dst, tm.vec2(scale), transform)
+  f(src, dst, tm.vec2(scale))
   return dst
 
-def resize_width(src, width:int, transform:ImageTransform=ImageTransform.none, dtype=None):
+def resize_width(src, width:int, dtype=None):
   h, w = src.shape[:2]
   scale = width / w
   size = tm.ivec2(width, int(h * scale))
-  return resize_bilinear(src, size, scale, transform, dtype)
+  return resize_bilinear(src, size, scale,  dtype)
 
-def scale_bilinear(src, scale, transform:ImageTransform=ImageTransform.none, dtype=None):
+def scale_bilinear(src, scale,  dtype=None):
 
   h, w = src.shape[:2]
   size = tm.vec2(w, h) * scale
-  return resize_bilinear(src, tm.ivec2(size), scale, transform, dtype)
+  return resize_bilinear(src, tm.ivec2(size), scale,  dtype)
   
 
 
