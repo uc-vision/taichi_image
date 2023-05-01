@@ -12,24 +12,12 @@ import tqdm as tqdm
 from taichi_image.test.arguments import init_with_args
 from taichi_image.bench import benchmark
 
-def to_channels_last(image:torch.Tensor):
-  return image.unsqueeze(0).permute(0, 3, 1, 2)
 
-  
-def from_channels_last(image:torch.Tensor):
-  return image.squeeze(0).permute(1, 2, 0).contiguous()
-
-
-
-
-@torch.compile
 def resize_transform(image:torch.Tensor, scale:float):
-  image = to_channels_last(image)
-  image = torch.nn.functional.interpolate(image, scale_factor=scale, mode='bilinear', align_corners=False)
-  image = torch.rot90(image, k=1, dims=[2, 3])
-  image = from_channels_last(image)
-
-  return image
+  
+  image = scale_bilinear(image, scale)
+  # return torch.rot90(image, k=1, dims=[0, 1])
+  return torch.flip(image, dims=[1])
 
 
 def main():
@@ -46,13 +34,13 @@ def main():
   device = torch.device('cuda', 0)
   test_image = torch.from_numpy(test_image).to(device, dtype=torch.float16) / 255
 
-  benchmark("interpolate", 
+  benchmark("resize_transform", 
     resize_transform, [test_image, 0.8], 
     iterations=10000, warmup=1000)
 
 
   benchmark("scale_bilinear", 
-    scale_bilinear, [test_image, 0.8, ImageTransform.rotate_90], 
+    scale_bilinear, [test_image, 0.8], 
     iterations=10000, warmup=1000)
 
 

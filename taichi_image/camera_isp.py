@@ -47,6 +47,25 @@ def metering_images(images, t, prev, stride=8):
     return torch.concatenate([new_bounds, new_stats])
 
 
+def transform(image:torch.Tensor, transform:interpolate.ImageTransform):
+  if transform == interpolate.ImageTransform.none:
+    return image
+  elif transform == interpolate.ImageTransform.rotate_90:
+    return torch.rot90(image, 1, (0, 1)).contiguous()
+  elif transform == interpolate.ImageTransform.rotate_180:
+    return torch.rot90(image, 2, (0, 1)).contiguous()
+  elif transform == interpolate.ImageTransform.rotate_270:
+    return torch.rot90(image, 3, (0, 1)).contiguous()
+  elif transform == interpolate.ImageTransform.flip_horiz:
+    return torch.flip(image, (1,)).contiguous()
+  elif transform == interpolate.ImageTransform.flip_vert:
+    return torch.flip(image, (0,)).contiguous()
+  elif transform == interpolate.ImageTransform.transverse:
+    return torch.flip(image, (0, 1)).contiguous()
+  elif transform == interpolate.ImageTransform.transpose:
+    return torch.transpose(image, 0, 1).contiguous()
+
+
 def camera_isp(name:str, dtype=ti.f32):
   decode12_kernel = packed.decode12_kernel(dtype, scaled=True)
   decode16_kernel = packed.decode16_kernel(dtype, scaled=True)
@@ -186,13 +205,11 @@ def camera_isp(name:str, dtype=ti.f32):
 
         scale = self.resize_width / w 
         output_size = (self.resize_width, round(h * scale))
-        return interpolate.resize_bilinear(image, output_size, scale, self.transform)
+        return interpolate.resize_bilinear(image, output_size, scale)
       elif self.scale is not None:
 
         output_size = (round(w * self.scale), round(h * self.scale))
         return interpolate.resize_bilinear(image, output_size, self.scale)
-      elif self.transform != interpolate.ImageTransform.none:
-        return interpolate.transform(image, self.transform)
       
       else:
         return image
@@ -234,7 +251,9 @@ def camera_isp(name:str, dtype=ti.f32):
         
     def _process_image(self, cfa):
       rgb = bayer.bayer_to_rgb(cfa)
-      return self.resize_image(rgb) 
+      resized = self.resize_image(rgb) 
+      return transform(resized, self.transform)
+      
 
 
     @beartype
