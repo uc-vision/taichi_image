@@ -12,12 +12,20 @@ import tqdm as tqdm
 from taichi_image.test.arguments import init_with_args
 from taichi_image.bench import benchmark
 
+import torch.nn.functional as F
+
 
 def resize_transform(image:torch.Tensor, scale:float):
   
   image = scale_bilinear(image, scale)
-  # return torch.rot90(image, k=1, dims=[0, 1])
-  return torch.flip(image, dims=[1])
+  return torch.rot90(image, k=1, dims=[0, 1]).contiguous()
+
+@torch.compile
+def interpolate_transform(image:torch.Tensor, scale:float):
+  image = image.permute(2, 0, 1).unsqueeze(0)
+  image = F.interpolate(image, scale_factor=scale, mode='bilinear', align_corners=False)
+  image = image.squeeze(0).permute(1, 2, 0)
+  return torch.rot90(image, k=1, dims=[0, 1]).contiguous()
 
 
 def main():
@@ -33,6 +41,11 @@ def main():
   
   device = torch.device('cuda', 0)
   test_image = torch.from_numpy(test_image).to(device, dtype=torch.float16) / 255
+
+  benchmark("interpolate_transform", 
+    interpolate_transform, [test_image, 0.8], 
+    iterations=10000, warmup=1000)
+
 
   benchmark("resize_transform", 
     resize_transform, [test_image, 0.8], 
