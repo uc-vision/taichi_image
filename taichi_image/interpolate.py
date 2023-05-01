@@ -54,6 +54,8 @@ def transformed(shape:tm.ivec2, p:tm.ivec2, transform:ti.template()):
     return p
 
 
+
+
 @ti.func
 def bilinear_func(src: ti.template(), dst: ti.template(), 
                   scale: ti.f32, intensity_scale: ti.f32,  transform:ti.template(), out_dtype:ti.template()):
@@ -83,12 +85,37 @@ def bilinear_kernel(in_dtype=ti.u8, out_dtype=None):
   return f
 
 
+@cache    
+def transform_kernel(dtype):
+  vec3 = ti.types.vector(3, dtype)
+
+  @ti.kernel
+  def f(src: ti.types.ndarray(dtype=vec3, ndim=2), 
+        dst: ti.types.ndarray(dtype=vec3, ndim=2),
+        transform:ti.template()):
+    for I in ti.grouped(dst):
+
+      p =  transformed(tm.ivec2(dst.shape), I, transform)
+      dst[I] = src[p]
+
+  return f
+
+
+
 def transformed_size(size, transform:ImageTransform):
   w, h = size
   if transform in [ImageTransform.rotate_90, ImageTransform.rotate_270, ImageTransform.transpose]:
     return (h, w)
   else:
     return (w, h)
+
+def transform(src, transform:ImageTransform):
+  size = transformed_size(src.shape[:2], transform)
+  dst = types.empty_like(src, (size[1], size[0], 3))
+
+  f = transform_kernel(types.ti_type(src))
+  f(src, dst, transform)
+  return dst
 
 
 def resize_bilinear(src, size, scale=None, transform:ImageTransform=ImageTransform.none, dtype=None):
