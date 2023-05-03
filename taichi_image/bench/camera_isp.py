@@ -32,6 +32,7 @@ class Processor:
 
 def main():
   args = init_with_args()
+  torch.set_printoptions(precision=3, sci_mode=False, linewidth=100)
 
 
   test_packed, test_image = load_test_image(args.image,  bayer.BayerPattern.RGGB)

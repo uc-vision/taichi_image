@@ -128,7 +128,7 @@ def camera_isp(name:str, dtype=ti.f32):
     log_b = stats.log_bounds
     b = stats.bounds
 
-    max_out = ti.f32(np.inf)
+    max_out = 1e-6
 
     key = (log_b.max - stats.log_mean) / (log_b.max - log_b.min)
     map_key = 0.3 + 0.7 * tm.pow(key, 1.4)
@@ -149,7 +149,8 @@ def camera_isp(name:str, dtype=ti.f32):
       p = scaled * (1.0 / (adapt + scaled))
       image[i] = ti.cast(p, dtype)
 
-      max_out = ti.atomic_max(max_out, p.max())
+      ti.atomic_max(max_out, p.max())
+
 
     for i in ti.grouped(ti.ndrange(image.shape[0], image.shape[1])):
       p = tm.pow(image[i] / max_out, 1.0 / gamma)
@@ -265,12 +266,12 @@ def camera_isp(name:str, dtype=ti.f32):
       else:
         self.metrics = metering_images(images, (1.0 - self.moving_alpha), self.metrics, self.metering_stride)
 
+
       outputs = [torch.empty(image.shape, dtype=torch.uint8, device=self.device) for image in images]
       for output, image in zip(outputs, images):
         reinhard_kernel(image, output, self.metrics, gamma, intensity, light_adapt, color_adapt)
       
       return outputs
-      # return [linear_output(image, gamma) for image in images]
     
 
 

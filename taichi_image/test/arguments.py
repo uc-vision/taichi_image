@@ -1,5 +1,6 @@
 import taichi as ti
 import argparse
+import torch
 
 
 def add_taichi_args(parser):
@@ -11,6 +12,8 @@ def add_taichi_args(parser):
 
 
 def init_with_args(**kwargs):
+  torch.set_printoptions(precision=3, sci_mode=False, linewidth=100)
+
 
   parser = argparse.ArgumentParser()
   parser.add_argument("image", type=str)
