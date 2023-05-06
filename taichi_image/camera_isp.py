@@ -151,7 +151,6 @@ def camera_isp(name:str, dtype=ti.f32):
 
       ti.atomic_max(max_out, p.max())
 
-
     for i in ti.grouped(ti.ndrange(image.shape[0], image.shape[1])):
       p = tm.pow(image[i] / max_out, 1.0 / gamma)
       output[i] = ti.cast(255 * p, ti.u8)

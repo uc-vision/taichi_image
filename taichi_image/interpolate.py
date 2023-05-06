@@ -4,7 +4,7 @@ import taichi as ti
 import taichi.math as tm
 from taichi_image import types
 
-from typeguard import typechecked
+from beartype import beartype
 
 class ImageTransform(Enum):
   none = 'none'
