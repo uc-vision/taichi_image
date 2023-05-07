@@ -42,19 +42,19 @@ def main():
   device = torch.device('cuda', 0)
   test_image = torch.from_numpy(test_image).to(device, dtype=torch.float16) / 255
 
-  benchmark("interpolate_transform", 
-    interpolate_transform, [test_image, 0.8], 
+  # benchmark("interpolate_transform", 
+  #   interpolate_transform, [test_image, 0.8], 
+  #   iterations=10000, warmup=1000)
+  benchmark("scale_bilinear", 
+    scale_bilinear, [test_image, 0.8], 
     iterations=10000, warmup=1000)
-
 
   benchmark("resize_transform", 
     resize_transform, [test_image, 0.8], 
     iterations=10000, warmup=1000)
 
 
-  benchmark("scale_bilinear", 
-    scale_bilinear, [test_image, 0.8], 
-    iterations=10000, warmup=1000)
+
 
 
 

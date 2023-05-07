@@ -1,6 +1,3 @@
-
-
-
 import argparse
 from functools import partial
 import torch
@@ -21,7 +18,9 @@ import taichi as ti
 
 class Processor:
   def __init__(self):
-    self.isp = camera_isp.Camera16(bayer.BayerPattern.RGGB, moving_alpha=0.1, resize_width=3072, transform=ImageTransform.rotate_270)
+    self.isp = camera_isp.Camera16(bayer.BayerPattern.RGGB, moving_alpha=0.1,
+                                   resize_width=3072)
+                                  #  resize_width=3072, transform=ImageTransform.rotate_270)
 
   def __call__(self, images):
       

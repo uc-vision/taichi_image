@@ -60,6 +60,7 @@ def transformed(shape:tm.ivec2, p:tm.ivec2, transform:ti.template()):
 def bilinear_func(src: ti.template(), dst: ti.template(), 
                   scale: ti.f32, intensity_scale: ti.f32,   out_dtype:ti.template()):
   
+  ti.loop_config(block_dim=128)
   for I in ti.grouped(dst):
     p = ti.cast(I, ti.f32) / scale
     dst[I] = ti.cast(sample_bilinear(src, p) * intensity_scale, out_dtype)
@@ -92,6 +93,7 @@ def transform_kernel(dtype):
   def f(src: ti.types.ndarray(dtype=vec3, ndim=2), 
         dst: ti.types.ndarray(dtype=vec3, ndim=2),
         transform:ti.template()):
+    
     for I in ti.grouped(dst):
 
       p =  transformed(tm.ivec2(dst.shape), I, transform)

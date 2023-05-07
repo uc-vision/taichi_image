@@ -138,14 +138,18 @@ def camera_isp(name:str, dtype=ti.f32):
     prev_stats = metering_from_vec(metering[None])
                       
     bounds = Bounds(np.inf, -np.inf)
+
+    # ti.loop_config(block_dim=128)
     for i in ti.grouped(ti.ndrange(*images.shape[:3])):
       for k in ti.static(range(3)):
         bounds.expand(images[i][k])
 
-    b = lerp(alpha, bounds.to_vec(), prev_stats.bounds.to_vec())
+    b = lerp(alpha, bounds.to_vec(), tm.vec2(prev_stats.bounds.min, prev_stats.bounds.max))
     bounds = Bounds(b[0], b[1])
 
-    stats = Metering(bounds, Bounds(np.inf, -np.inf), 0, 0, tm.vec3(0, 0, 0))      
+    stats = Metering(bounds, Bounds(np.inf, -np.inf), 0, 0, tm.vec3(0, 0, 0))   
+
+    # ti.loop_config(block_dim=128)
     for i in ti.grouped(ti.ndrange(*images.shape[:3])):
       stats.accum(images[i])
 
@@ -180,6 +184,8 @@ def camera_isp(name:str, dtype=ti.f32):
     map_key = 0.3 + 0.7 * tm.pow(key, 1.4)
 
     mean = lerp(color_adapt, stats.mean, stats.rgb_mean)
+
+    ti.loop_config(block_dim=128)
     for i in ti.grouped(ti.ndrange(image.shape[0], image.shape[1])):
   
       scaled =  (image[i] - b.min) / (b.max - b.min)
@@ -197,6 +203,7 @@ def camera_isp(name:str, dtype=ti.f32):
 
       ti.atomic_max(max_out, p.max())
 
+    ti.loop_config(block_dim=128)
     for i in ti.grouped(ti.ndrange(image.shape[0], image.shape[1])):
       p = tm.pow(image[i] / max_out, 1.0 / gamma)
       output[i] = ti.cast(255 * p, ti.u8)
@@ -310,9 +317,8 @@ def camera_isp(name:str, dtype=ti.f32):
         initial = torch.zeros(9, dtype=torch.float32, device=self.device)
         self.metrics = metering_images(images, 0.0, 
             initial, self.metering_stride)
-        # self.metrics = metering_images_torch(images, 0.0, 
-        #     initial, self.metering_stride)
       else:
+
         self.metrics = metering_images(images, (1.0 - self.moving_alpha), 
             self.metrics, self.metering_stride)
 
