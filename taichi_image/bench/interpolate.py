@@ -16,8 +16,8 @@ import torch.nn.functional as F
 
 def resize_transform(image:torch.Tensor, scale:float):
   
-  image = scale_bilinear(image, scale)
-  return transform(image, ImageTransform.rotate_90)
+  return scale_bilinear(image, scale, ImageTransform.rotate_90)
+  # return transform(image, ImageTransform.rotate_90)
 
 def resize_rot90(image:torch.Tensor, scale:float):
   

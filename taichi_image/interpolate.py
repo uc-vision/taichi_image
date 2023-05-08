@@ -58,11 +58,13 @@ def transformed(shape:tm.ivec2, p:tm.ivec2, transform:ti.template()):
 
 @ti.func
 def bilinear_func(src: ti.template(), dst: ti.template(), 
-                  scale: ti.f32, intensity_scale: ti.f32,   out_dtype:ti.template()):
+                  scale: ti.f32, intensity_scale: ti.f32, transform:ti.template(), out_dtype:ti.template()):
   
-  ti.loop_config(block_dim=128)
+  ti.loop_config(block_dim=1024)
   for I in ti.grouped(dst):
-    p = ti.cast(I, ti.f32) / scale
+    t =  transformed(tm.ivec2(dst.shape), I, transform)
+    p = ti.cast(t, ti.f32) / scale
+
     dst[I] = ti.cast(sample_bilinear(src, p) * intensity_scale, out_dtype)
 
 
@@ -80,9 +82,15 @@ def bilinear_kernel(in_dtype=ti.u8, out_dtype=None):
   @ti.kernel
   def f(src: ti.types.ndarray(dtype=in_vec3, ndim=2), 
         dst: ti.types.ndarray(dtype=out_vec3, ndim=2),
-        scale: tm.vec2):
-    bilinear_func(src, dst, scale, intensity_scale,  out_dtype)
+        scale: tm.vec2,
+        transform:ti.template()
+        ):
+    bilinear_func(src, dst, scale, intensity_scale,  transform, out_dtype)
   return f
+
+
+
+
 
 
 @cache    
@@ -120,17 +128,18 @@ def transform(src, transform:ImageTransform):
   return dst
 
 
-def resize_bilinear(src, size, scale=None, dtype=None):
+def resize_bilinear(src, size, scale=None, transform:ImageTransform=ImageTransform.none, dtype=None):
   if dtype is None:
     dtype = types.ti_type(src)
 
   if scale is None:
     scale = tm.vec2(size) / tm.vec2(src.shape[:2])
 
+  size = transformed_size(src.shape[:2], transform)
 
   dst = types.empty_like(src, (size[1], size[0], 3), dtype)
   f = bilinear_kernel(types.ti_type(src), dtype)
-  f(src, dst, tm.vec2(scale))
+  f(src, dst, tm.vec2(scale), transform=transform)
   return dst
 
 def resize_width(src, width:int, dtype=None):
@@ -139,11 +148,11 @@ def resize_width(src, width:int, dtype=None):
   size = tm.ivec2(width, int(h * scale))
   return resize_bilinear(src, size, scale,  dtype)
 
-def scale_bilinear(src, scale,  dtype=None):
+def scale_bilinear(src, scale, transform:ImageTransform=ImageTransform.none, dtype=None):
 
   h, w = src.shape[:2]
   size = tm.vec2(w, h) * scale
-  return resize_bilinear(src, tm.ivec2(size), scale,  dtype)
+  return resize_bilinear(src, tm.ivec2(size), scale, transform=transform,  dtype=dtype)
   
 
 
