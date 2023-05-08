@@ -119,6 +119,8 @@ def decode16_func(out_type, scaled=False):
 
   @ti.func
   def decode(encoded:ti.template(), out:ti.template()):
+
+    ti.loop_config(block_dim=128)
     for i in range(out.shape[0]):
       b1 = ti.cast(encoded[i * 2 + 1], ti.u16)
       b2 = ti.cast(encoded[i * 2], ti.u16)

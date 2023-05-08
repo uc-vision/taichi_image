@@ -3,10 +3,10 @@ import torch
 import time
 from tqdm import tqdm
 
-from typeguard import typechecked
+from beartype import beartype
 
 class Benchmark:
-  @typechecked
+  @beartype
   def __init__(self, name:str, iterations:int=1):
     self.iterations = iterations
     self.name = name
@@ -27,7 +27,7 @@ class Benchmark:
     else:
       print(f"{self.name}: {self.elapsed:.4f}s")
 
-@typechecked
+@beartype
 def benchmark(name,  func:Callable, args:List=None, kwargs:Dict=None, iterations:int=1, warmup:int=0, progress=tqdm):
   args = args or []
   kwargs = kwargs or {}

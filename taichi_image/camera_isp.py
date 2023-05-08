@@ -21,7 +21,7 @@ def moving_average(old, new, alpha):
 def image_bounds(image):
   return torch.concatenate([image.min().view(1), image.max().view(1)])
 
-def metering(image, bounds):
+def metering_torch(image, bounds):
   weights = torch.tensor([0.299, 0.587, 0.114], dtype=image.dtype, device=image.device)
   
   image = (image - bounds[0]) / (bounds[1] - bounds[0])
@@ -35,16 +35,18 @@ def metering(image, bounds):
                 log_grey.mean().view(1), grey_mean.view(1), image.mean(dim=(0, 1))], dim=0)
 
 @torch.compile
-def metering_images(images, t, prev, stride=8):
+def metering_images_torch(images, t, prev, stride=8):
     images = torch.concatenate([image[::stride, ::stride, :] for image in images], 0)
     bounds = image_bounds(images)
 
     new_bounds = t * prev[:2] + (1.0 - t) * bounds
 
-    stats = metering(images, new_bounds)
+    stats = metering_torch(images, new_bounds)
     new_stats = t * prev[2:] + (1.0 - t) * stats
 
     return torch.concatenate([new_bounds, new_stats])
+
+
 
 
 def transform(image:torch.Tensor, transform:interpolate.ImageTransform):
@@ -99,14 +101,28 @@ def camera_isp(name:str, dtype=ti.f32):
     @ti.func
     def to_vec(self):
       return vec9(
+        self.bounds.min, self.bounds.max,
         self.log_bounds.min, self.log_bounds.max,
                     self.log_mean, self.mean, *self.rgb_mean)
   
-  @torch.compile
-  def linear_output(image, gamma=1.0):
-    upper = torch.max(image)
-    linear = 255 * (image / upper).pow(1/gamma)
-    return linear.to(torch.uint8)
+    @ti.func 
+    def accum(self, rgb:tm.vec3):
+      scaled = (rgb - self.bounds.min) / (self.bounds.max - self.bounds.min)
+      gray = ti.f32(rgb_gray(scaled))
+      log_gray = tm.log(tm.max(gray, 1e-4))
+
+      ti.atomic_min(self.log_bounds.min, log_gray)
+      ti.atomic_max(self.log_bounds.max, log_gray)
+
+      self.log_mean += log_gray
+      self.mean += gray
+      self.rgb_mean += scaled
+
+    @ti.func
+    def normalise(self, n:ti.i32):
+      self.log_mean /= ti.f32(n)
+      self.mean /= ti.f32(n)
+      self.rgb_mean /= ti.f32(n)
 
 
   @ti.func
@@ -114,6 +130,40 @@ def camera_isp(name:str, dtype=ti.f32):
     return Metering(Bounds(vec[0], vec[1]), Bounds(vec[2], vec[3]), vec[4], vec[5], tm.vec3(vec[6], vec[7], vec[8]))
 
 
+  @ti.kernel
+  def metering_kernel(images: ti.types.ndarray(dtype=vec_dtype, ndim=3),
+                      metering:ti.types.ndarray(dtype=vec9, ndim=0),
+                      alpha:ti.f32):
+    
+    prev_stats = metering_from_vec(metering[None])
+                      
+    bounds = Bounds(np.inf, -np.inf)
+
+    # ti.loop_config(block_dim=128)
+    for i in ti.grouped(ti.ndrange(*images.shape[:3])):
+      for k in ti.static(range(3)):
+        bounds.expand(images[i][k])
+
+    b = lerp(alpha, bounds.to_vec(), tm.vec2(prev_stats.bounds.min, prev_stats.bounds.max))
+    bounds = Bounds(b[0], b[1])
+
+    stats = Metering(bounds, Bounds(np.inf, -np.inf), 0, 0, tm.vec3(0, 0, 0))   
+
+    # ti.loop_config(block_dim=128)
+    for i in ti.grouped(ti.ndrange(*images.shape[:3])):
+      stats.accum(images[i])
+
+    stats.normalise(images.shape[0] * images.shape[1] * images.shape[2])
+    v = lerp(alpha, stats.to_vec(), metering[None])
+
+    metering[None] = v
+
+  def metering_images(images, t, prev, stride=8):
+      images = torch.stack(
+        [image[::stride, ::stride, :] for image in images], 0)
+      
+      metering_kernel(images, prev, t)
+      return prev
     
   @ti.kernel
   def reinhard_kernel(image: ti.types.ndarray(dtype=vec_dtype, ndim=2), 
@@ -128,12 +178,14 @@ def camera_isp(name:str, dtype=ti.f32):
     log_b = stats.log_bounds
     b = stats.bounds
 
-    max_out = ti.f32(np.inf)
+    max_out = 1e-6
 
     key = (log_b.max - stats.log_mean) / (log_b.max - log_b.min)
     map_key = 0.3 + 0.7 * tm.pow(key, 1.4)
 
     mean = lerp(color_adapt, stats.mean, stats.rgb_mean)
+
+    ti.loop_config(block_dim=128)
     for i in ti.grouped(ti.ndrange(image.shape[0], image.shape[1])):
   
       scaled =  (image[i] - b.min) / (b.max - b.min)
@@ -149,8 +201,9 @@ def camera_isp(name:str, dtype=ti.f32):
       p = scaled * (1.0 / (adapt + scaled))
       image[i] = ti.cast(p, dtype)
 
-      max_out = ti.atomic_max(max_out, p.max())
+      ti.atomic_max(max_out, p.max())
 
+    ti.loop_config(block_dim=128)
     for i in ti.grouped(ti.ndrange(image.shape[0], image.shape[1])):
       p = tm.pow(image[i] / max_out, 1.0 / gamma)
       output[i] = ti.cast(255 * p, ti.u8)
@@ -261,16 +314,20 @@ def camera_isp(name:str, dtype=ti.f32):
                          gamma:float=1.0, intensity:float=1.0, light_adapt:float=1.0, color_adapt:float=0.0):
 
       if self.metrics is None:
-        self.metrics = metering_images(images, 0.0, torch.zeros(3, dtype=torch_dtype, device=self.device), self.metering_stride)
+        initial = torch.zeros(9, dtype=torch.float32, device=self.device)
+        self.metrics = metering_images(images, 0.0, 
+            initial, self.metering_stride)
       else:
-        self.metrics = metering_images(images, (1.0 - self.moving_alpha), self.metrics, self.metering_stride)
+
+        self.metrics = metering_images(images, (1.0 - self.moving_alpha), 
+            self.metrics, self.metering_stride)
+
 
       outputs = [torch.empty(image.shape, dtype=torch.uint8, device=self.device) for image in images]
       for output, image in zip(outputs, images):
         reinhard_kernel(image, output, self.metrics, gamma, intensity, light_adapt, color_adapt)
       
       return outputs
-      # return [linear_output(image, gamma) for image in images]
     
 
 

@@ -1,6 +1,3 @@
-
-
-
 import argparse
 from functools import partial
 import torch
@@ -20,8 +17,8 @@ import taichi as ti
 
 
 class Processor:
-  def __init__(self):
-    self.isp = camera_isp.Camera16(bayer.BayerPattern.RGGB, moving_alpha=0.1, resize_width=3072, transform=ImageTransform.rotate_270)
+  def __init__(self, **kwargs):
+    self.isp = camera_isp.Camera16(**kwargs)
 
   def __call__(self, images):
       
@@ -32,6 +29,7 @@ class Processor:
 
 def main():
   args = init_with_args()
+  torch.set_printoptions(precision=3, sci_mode=False, linewidth=100)
 
 
   test_packed, test_image = load_test_image(args.image,  bayer.BayerPattern.RGGB)
@@ -39,7 +37,8 @@ def main():
 
   test_packed = torch.from_numpy(test_packed).to(device='cuda:0')
   test_images = [test_packed.clone() for _ in range(6)]
-  processor = Processor()
+  processor = Processor(bayer_pattern=bayer.BayerPattern.RGGB, moving_alpha=0.1,
+                                   resize_width=args.resize, transform=ImageTransform[args.transform])
 
 
   for i in tqdm(range(10000)):  

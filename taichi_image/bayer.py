@@ -132,6 +132,7 @@ def bayer_to_rgb_func(pattern:BayerPattern, in_dtype=ti.u8, out_dtype=None):
   @ti.func
   def f(bayer: ti.template(), out: ti.template()):
 
+    ti.loop_config(block_dim=128)
     for i, j in ti.ndrange(bayer.shape[0] // 2, bayer.shape[1] // 2):
       x, y = i * 2, j * 2
 
