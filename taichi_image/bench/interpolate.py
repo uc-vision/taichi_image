@@ -14,8 +14,12 @@ from taichi_image.bench import benchmark
 
 import torch.nn.functional as F
 
-
 def resize_transform(image:torch.Tensor, scale:float):
+  
+  image = scale_bilinear(image, scale)
+  return transform(image, ImageTransform.rot90)
+
+def resize_rot90(image:torch.Tensor, scale:float):
   
   image = scale_bilinear(image, scale)
   return torch.rot90(image, k=1, dims=[0, 1]).contiguous()
@@ -42,13 +46,12 @@ def main():
   device = torch.device('cuda', 0)
   test_image = torch.from_numpy(test_image).to(device, dtype=torch.float16) / 255
 
-  benchmark("interpolate_transform", 
-    interpolate_transform, [test_image, 0.8], 
-    iterations=10000, warmup=1000)
-
-
   benchmark("resize_transform", 
     resize_transform, [test_image, 0.8], 
+    iterations=10000, warmup=1000)
+
+  benchmark("resize_rot90", 
+    resize_rot90, [test_image, 0.8], 
     iterations=10000, warmup=1000)
 
 
