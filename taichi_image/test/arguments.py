@@ -6,8 +6,11 @@ import torch
 def add_taichi_args(parser):
   parser.add_argument("--debug", action="store_true")
   parser.add_argument("--n", type=int, default=100000)
+  parser.add_argument("--resize", type=int, default=0)
+  parser.add_argument("--transform", type=str, default='none')
   parser.add_argument("--log", default=ti.INFO, choices=ti._logging.supported_log_levels)
   parser.add_argument("--device", default="cuda", choices=["cuda", "cpu"])
+
   parser.add_argument("--show", action="store_true")
 
 
