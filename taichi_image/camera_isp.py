@@ -304,8 +304,8 @@ def camera_isp(name:str, dtype=ti.f32):
         
     def _process_image(self, cfa):
       rgb = bayer.bayer_to_rgb(cfa)
-      resized = self.resize_image(rgb) 
-      return transform(resized, self.transform)
+      return self.resize_image(rgb) 
+      
       
 
 
@@ -327,7 +327,8 @@ def camera_isp(name:str, dtype=ti.f32):
       for output, image in zip(outputs, images):
         reinhard_kernel(image, output, self.metrics, gamma, intensity, light_adapt, color_adapt)
       
-      return outputs
+      return transform(outputs, self.transform)
+
     
 
 
