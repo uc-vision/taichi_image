@@ -327,7 +327,7 @@ def camera_isp(name:str, dtype=ti.f32):
       for output, image in zip(outputs, images):
         reinhard_kernel(image, output, self.metrics, gamma, intensity, light_adapt, color_adapt)
       
-      return transform(outputs, self.transform)
+      return [transform(output, self.transform) for output in outputs]
 
     
 
