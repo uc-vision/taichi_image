@@ -87,4 +87,5 @@ def zeros_like(in_arr, shape=None, dtype=None):
     return np.zeros(shape, ti_to_np[dtype])
   elif isinstance(in_arr, torch.Tensor):
     assert dtype in ti_to_torch, f'Unsupported torch dtype {dtype}'
-    return torch.zeros(tuple(shape), ti_to_torch[dtype], device=in_arr.device)       
+
+    return torch.zeros(tuple(shape), dtype=ti_to_torch[dtype], device=in_arr.device)       
