@@ -2,11 +2,12 @@ from typing import List, Optional, Tuple
 from beartype import beartype
 import taichi as ti
 import taichi.math as tm
+from taichi_image.color import rgb_gray
 from taichi_image.types import empty_like, ti_to_torch
 import torch
 import torch.nn.functional as F
 
-from taichi_image.util import Bounds, lerp, vec9, rgb_gray
+from taichi_image.util import Bounds, lerp, vec9
 
 from . import tonemap, interpolate, bayer, packed
 import numpy as np

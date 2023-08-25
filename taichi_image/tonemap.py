@@ -1,4 +1,5 @@
-from taichi_image.util import Bounds, bounds_func, cache, vec7, rgb_gray, lerp
+from taichi_image.color import rgb_gray
+from taichi_image.util import Bounds, bounds_func, cache, vec7, lerp
 import numpy as np
 
 import taichi as ti
