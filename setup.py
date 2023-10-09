@@ -5,7 +5,8 @@ setup(name='taichi_image',
       install_requires=[
           #'taichi',
           'beartype',
-          'tqdm'
+          'tqdm',
+          'colour-demosaicing'
       ],
       packages=find_packages(),
       entry_points={}
