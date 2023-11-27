@@ -209,7 +209,14 @@ def camera_isp(name:str, dtype=ti.f32):
       p = tm.pow(image[i] / max_out, 1.0 / gamma)
       output[i] = ti.cast(255 * p, ti.u8)
 
-
+  @ti.kernel
+  def linear_kernel(image: ti.types.ndarray(dtype=vec_dtype, ndim=2), 
+          output : ti.types.ndarray(dtype=ti.types.vector(3, ti.u8), ndim=2),
+          metering : ti.types.ndarray(dtype=ti.f32, ndim=1),
+                    gamma: ti.template()):
+    
+    stats = metering_from_vec(metering)
+    tonemap.linear_func(image, output, stats.bounds, gamma, 255, ti.u8)
 
   @ti.data_oriented
   class ISP():
@@ -308,12 +315,7 @@ def camera_isp(name:str, dtype=ti.f32):
       return self.resize_image(rgb) 
       
       
-
-
-    @beartype
-    def tonemap_reinhard(self, images:List[torch.Tensor], 
-                         gamma:float=1.0, intensity:float=1.0, light_adapt:float=1.0, color_adapt:float=0.0):
-
+    def update_metering(self, images:List[torch.Tensor]):
       if self.metrics is None:
         initial = torch.zeros(9, dtype=torch.float32, device=self.device)
         self.metrics = metering_images(images, 0.0, 
@@ -324,13 +326,26 @@ def camera_isp(name:str, dtype=ti.f32):
             self.metrics, self.metering_stride)
 
 
+    @beartype
+    def tonemap_reinhard(self, images:List[torch.Tensor], 
+                         gamma:float=1.0, intensity:float=1.0, light_adapt:float=1.0, color_adapt:float=0.0):
+      self.update_metering(images)
+
       outputs = [torch.empty(image.shape, dtype=torch.uint8, device=self.device) for image in images]
       for output, image in zip(outputs, images):
         reinhard_kernel(image, output, self.metrics, gamma, intensity, light_adapt, color_adapt)
       
       return [interpolate.transform(output, self.transform) for output in outputs]
 
-    
+    @beartype
+    def tonemap_linear(self, images:List[torch.Tensor],  gamma:float=1.0):
+      self.update_metering(images)
+
+      outputs = [torch.empty(image.shape, dtype=torch.uint8, device=self.device) for image in images]
+      for output, image in zip(outputs, images):
+        linear_kernel(image, output, self.metrics, gamma)
+      
+      return [interpolate.transform(output, self.transform) for output in outputs]
 
 
   ISP.__qualname__ = name
