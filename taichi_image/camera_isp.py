@@ -1,3 +1,4 @@
+import sys
 from typing import List, Optional, Tuple
 from beartype import beartype
 import taichi as ti
@@ -108,7 +109,7 @@ def camera_isp(name:str, dtype=ti.f32):
   
     @ti.func 
     def accum(self, rgb:tm.vec3):
-      scaled = (rgb - self.bounds.min) / (self.bounds.max - self.bounds.min)
+      scaled = (rgb - self.bounds.min) / (self.bounds.max - self.bounds.min + 1e-6)
       gray = ti.f32(rgb_gray(scaled))
       log_gray = tm.log(tm.max(gray, 1e-4))
 
@@ -163,8 +164,10 @@ def camera_isp(name:str, dtype=ti.f32):
       images = torch.stack(
         [image[::stride, ::stride, :] for image in images], 0)
       
-      metering_kernel(images, prev, t)
-      return prev
+      metering = prev.clone()
+      metering_kernel(images, metering, t)
+
+      return metering
     
   @ti.kernel
   def reinhard_kernel(image: ti.types.ndarray(dtype=vec_dtype, ndim=2), 
@@ -320,6 +323,7 @@ def camera_isp(name:str, dtype=ti.f32):
         initial = torch.zeros(9, dtype=torch.float32, device=self.device)
         self.metrics = metering_images(images, 0.0, 
             initial, self.metering_stride)
+        
       else:
 
         self.metrics = metering_images(images, (1.0 - self.moving_alpha), 
