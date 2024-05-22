@@ -1,0 +1,49 @@
+[project]
+name = "taichi_image"  
+version = "0.2.1"  
+description = "A taichi-based camera ISP pipeline"  
+readme = "README.md" 
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+
+maintainers = [
+  {name = "Oliver Batchelor", email = "oliver.batchelor@canterbury.ac.nz" } 
+]
+
+dependencies = [
+  "beartype", 
+  "tqdm",
+  "colour-demosaicing"
+]
+
+
+[tool.setuptools.packages.find]
+include = ["taichi_image"]
+
+
+[project.urls] 
+"Homepage" = "https://github.com/uc-vision/taichi_image"
+
+[build-system]
+requires = ["setuptools>=43.0.0",  "wheel", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+
+[options]
+dependency_links = ["https://pypi.taichi.graphics/simple/"]
+
+
+[tool.setuptools.package-data]
+
+[tool.pyright]
+reportInvalidTypeForm = "none"
+
+[tool.ruff]
+indent-width = 2
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    # disable "UserWarning: The .grad attribute of a Tensor that is not a leaf Tensor"
+    "ignore::UserWarning"  
+]
+

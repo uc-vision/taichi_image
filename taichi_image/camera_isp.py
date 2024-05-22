@@ -71,7 +71,6 @@ def transform(image:torch.Tensor, transform:interpolate.ImageTransform):
 
 
 def camera_isp(name:str, dtype=ti.f32):
-  decode12_kernel = packed.decode12_kernel(dtype, scaled=True)
   decode16_kernel = packed.decode16_kernel(dtype, scaled=True)
 
   torch_dtype = ti_to_torch[dtype]
@@ -157,7 +156,6 @@ def camera_isp(name:str, dtype=ti.f32):
 
     stats.normalise(images.shape[0] * images.shape[1] * images.shape[2])
     v = lerp(alpha, stats.to_vec(), metering[None])
-
     metering[None] = v
 
   def metering_images(images, t, prev, stride=8):
@@ -289,7 +287,10 @@ def camera_isp(name:str, dtype=ti.f32):
       load_16f(image, cfa)
       return self._process_image(cfa)
 
-    def load_packed12(self, image_data):
+    def load_packed12(self, image_data, ids_format=False):
+
+      decode12_kernel = packed.decode12_kernel(dtype, scaled=True, ids_format=ids_format)
+
       w, h = (image_data.shape[1] * 2 // 3, image_data.shape[0])
 
       cfa = torch.empty(h, w, dtype=torch_dtype, device=self.device)    

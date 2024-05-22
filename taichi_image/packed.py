@@ -30,10 +30,37 @@ def decode12_pair(input:u8vec3) -> u16vec2:
     (bytes[2] << 4) | (bytes[1] >> 4),
     ], dt=ti.u16)
 
+
+# IDS format bit packing for 12-bit values
+
+@ti.func
+def decode12_pair_ids(input:u8vec3) -> u16vec2:
+  # 3 x 8 bits -> 2 x 12 bits (as u16)
+
+  bytes = ti.cast(input, ti.u16)
+  return ti.Vector([
+    (bytes[0] << 4 | (bytes[2] & 0xf)),
+    (bytes[1] << 4) | (bytes[2] >> 4),
+    ], dt=ti.u16)
+
+
+@ti.func
+def encode12_pair_ids(pixels: u16vec2) -> u8vec3:
+  # 2 x 12 bits -> 3 x 8 bits 
+
+  return ti.Vector([
+    (pixels[0] >> 4), 
+    (pixels[1] >> 4), 
+    (pixels[0] & 0xf) << 4 | (pixels[1] & 0xf),
+  ], dt=ti.u8)
+
+
+
 @cache
-def encode12_kernel(in_type, scaled=False):
+def encode12_kernel(in_type, scaled=False, ids_format=False):
   scale = types.scale_factor[in_type]
   
+  encode_pair = encode12_pair if not ids_format else encode12_pair_ids
 
   @ti.func
   def read_value_scaled(arr:ti.template(), i:ti.int32) -> ti.u16:
@@ -53,7 +80,7 @@ def encode12_kernel(in_type, scaled=False):
     encoded:ti.types.ndarray(ti.u8, ndim=1)):
     for i_half in ti.ndrange(values.shape[0] // 2):
       i = i_half * 2   
-      bytes = encode12_pair(u16vec2(read_value(values, i), read_value(values, i + 1)))
+      bytes = encode_pair(u16vec2(read_value(values, i), read_value(values, i + 1)))
 
       idx = 3 * i_half
       for k in ti.static(range(3)):
@@ -62,8 +89,10 @@ def encode12_kernel(in_type, scaled=False):
   return f
 
 @cache 
-def decode12_func(out_type, scaled=False):
+def decode12_func(out_type, scaled=False, ids_format=False):
   scale = types.scale_factor[out_type]
+
+  decode_pair = decode12_pair if not ids_format else decode12_pair_ids
   
   @ti.func
   def write_value_scaled(arr:ti.template(), i:ti.int32, value:ti.u16):
@@ -82,7 +111,7 @@ def decode12_func(out_type, scaled=False):
       i = i_half * 2
       idx = 3 * i_half
       bytes = ti.Vector([encoded[idx + k] for k in ti.static(range(3))], dt=ti.u8)
-      pair = decode12_pair(bytes)
+      pair = decode_pair(bytes)
 
       write_value(out, i, pair[0])
       write_value(out, i + 1, pair[1])
@@ -91,8 +120,8 @@ def decode12_func(out_type, scaled=False):
 
 
 @cache
-def decode12_kernel(out_type, scaled=False):
-  f = decode12_func(out_type, scaled=scaled)
+def decode12_kernel(out_type, scaled=False, ids_format=False):
+  f = decode12_func(out_type, scaled=scaled, ids_format=ids_format)
 
   @ti.kernel
   def k(encoded:ti.types.ndarray(ti.u8), 
@@ -144,38 +173,38 @@ def decode16_kernel(out_type, scaled=False):
 
 
 
-def encode12(values, scaled=False):
+def encode12(values, scaled=False, ids_format=False):
   shape = values.shape
   assert shape[-1] % 2 == 0, f"last dimension must be even for 12-bit encoding got: {shape}"
   values = values.reshape(-1)
 
   encoded = types.empty_like(values, ((values.shape[0] * 3) // 2, ), dtype=ti.uint8)
-  f = encode12_kernel(types.ti_type(values), scaled=scaled)
+  f = encode12_kernel(types.ti_type(values), scaled=scaled, ids_format=ids_format)
     
   f(values, encoded)
   return encoded.reshape(shape[:-1] + (shape[-1] * 3 // 2,))
 
 
-def decode12(values, dtype=ti.u16, scaled=False):
+def decode12(values, dtype=ti.u16, scaled=False, ids_format=False):
   shape = values.shape
   assert types.ti_type(values) == ti.uint8
   assert shape[-1] % 3 == 0, f"last dimension must be a factor of 3 for 12-bit decoding got: {shape}"
   values = values.reshape(-1)
 
   decoded = types.empty_like(values, ((values.shape[0] * 2) // 3,), dtype=dtype)
-  f = decode12_kernel(dtype, scaled=scaled)
+  f = decode12_kernel(dtype, scaled=scaled, ids_format=ids_format)
 
   f(values, decoded)
   return decoded.reshape(shape[:-1] + (shape[-1] * 2 // 3,))
 
-def decode16(values, dtype=ti.u16, scaled=False):
+def decode16(values, dtype=ti.u16, scaled=False, ids_format=False):
   shape = values.shape
   assert types.ti_type(values) == ti.uint8
   assert shape[-1] % 2 == 0, f"last dimension must be a factor of 2 for 16-bit decoding got: {shape}"
   values = values.reshape(-1)
 
   decoded = types.empty_like(values, (values.shape[0] // 2,), dtype=dtype)
-  f = decode16_kernel(dtype, scaled=scaled)
+  f = decode16_kernel(dtype, scaled=scaled, ids_format=ids_format)
 
   f(values, decoded)
   return decoded.reshape(shape[:-1] + (shape[-1] // 2,))

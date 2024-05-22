@@ -35,6 +35,7 @@ def display_rgb(k, rgb_image):
   if isinstance(rgb_image, torch.Tensor):
     rgb_image = rgb_image.cpu().numpy()
     
+  cv2.namedWindow(k, cv2.WINDOW_NORMAL)
 
   cv2.imshow(k, cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR))
   cv2.waitKey(0)
