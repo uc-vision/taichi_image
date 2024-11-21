@@ -219,7 +219,6 @@ def camera_isp(name:str, dtype=ti.f32):
     stats = metering_from_vec(metering)
     tonemap.linear_func(image, output, stats.bounds, gamma, 255, ti.u8)
 
-  @ti.data_oriented
   class ISP():
     @beartype
     def __init__(self, bayer_pattern:bayer.BayerPattern, 
@@ -290,7 +289,6 @@ def camera_isp(name:str, dtype=ti.f32):
     def load_packed12(self, image_data, ids_format=False):
 
       decode12_kernel = packed.decode12_kernel(dtype, scaled=True, ids_format=ids_format)
-
       w, h = (image_data.shape[1] * 2 // 3, image_data.shape[0])
 
       cfa = torch.empty(h, w, dtype=torch_dtype, device=self.device)    

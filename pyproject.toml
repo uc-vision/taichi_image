@@ -1,6 +1,6 @@
 [project]
 name = "taichi_image"  
-version = "0.2.1"  
+version = "0.3.0"  
 description = "A taichi-based camera ISP pipeline"  
 readme = "README.md" 
 requires-python = ">=3.10"
@@ -27,6 +27,9 @@ include = ["taichi_image"]
 [build-system]
 requires = ["setuptools>=43.0.0",  "wheel", "setuptools-scm"]
 build-backend = "setuptools.build_meta"
+
+[project.scripts]  # Optional
+tonemap_scan = "taichi_image.scripts.tonemap_scan:main"
 
 
 [options]
