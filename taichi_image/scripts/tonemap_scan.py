@@ -165,6 +165,7 @@ def tonemap_scan_parser():
   parser.add_argument("--reverse", action='store_true')
   parser.add_argument("--depth_debug", action='store_true')
   parser.add_argument("--dav2_module", type=Path)
+  parser.add_argument("--weights", type=Path)
   add_taichi_args(parser)
 
   return parser
@@ -229,9 +230,14 @@ def main():
   torch.set_printoptions(precision=3, sci_mode=False, linewidth=100)
   
   args = tonemap_scan_parser().parse_args()
-
+  
   if args.dav2_module:
     set_depth_anything_v2_dir(args.dav2_module)
+
+    if args.weights:
+      # Initialise predictor with weights path.
+      CachedDepthAnythingV2TRTPredictor(weights_path=args.weights)
+  
 
   params = parse_tonemap_params(args)
     
