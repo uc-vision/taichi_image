@@ -266,7 +266,6 @@ def main():
       for param in params:
         outputs = param.isp.tonemap_reinhard([load_image(bytes, param) for bytes in images.values()], **param.kwargs)
         rgbs.append(param.to_rgb(outputs))
-      print('?????', len(rgbs), rgbs)
       print(f'took to display: {perf_counter() - start} (s)')
 
       display_multi_rgb('Tonemapped', rgbs)
