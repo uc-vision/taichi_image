@@ -13,7 +13,8 @@ maintainers = [
 dependencies = [
   "beartype", 
   "tqdm",
-  "colour-demosaicing"
+  "colour-demosaicing",
+  "monodepth-utilities"
 ]
 
 
@@ -38,8 +39,8 @@ dependency_links = ["https://pypi.taichi.graphics/simple/"]
 
 [tool.setuptools.package-data]
 
-[tool.pyright]
-reportInvalidTypeForm = "none"
+#[tool.pyright]
+#reportInvalidTypeForm = "none"
 
 [tool.ruff]
 indent-width = 2

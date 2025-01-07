@@ -3,6 +3,7 @@ import numpy as np
 import argparse
 from taichi_image.bayer import BayerPattern, rgb_to_bayer, bayer_to_rgb
 from taichi_image.util import cache
+from typing import List, Tuple
 
 import cv2
 import torch
@@ -37,8 +38,43 @@ def display_rgb(k, rgb_image):
     
   cv2.namedWindow(k, cv2.WINDOW_NORMAL)
 
-  cv2.imshow(k, cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR))
-  cv2.waitKey(0)
+  key = -1
+  while key == -1:
+    img = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
+    #cv2.putText(img, 'Hello world!', (40, 200), cv2.FONT_HERSHEY_SIMPLEX, 8, (255, 255, 255), 10, 2)
+    cv2.imshow(k, img)
+    key = cv2.waitKey(1)
+
+
+def display_multi_rgb(window_name: str, rgbs: List[Tuple[np.ndarray, str]]):
+  """ 
+    Displays multiple rgb images provided in a list of 
+    tuple where the first item is the image and second a caption of parameters for the image.
+  """
+  cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+
+  key = -1
+  while key == -1:
+    # Merge images
+    images = []
+    for image, text in rgbs:
+      img = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+      cv2.putText(img, text, (40, 200), cv2.FONT_HERSHEY_SIMPLEX, 8, 255, 10, 2)
+      images.append(img)
+    cv2.imshow(window_name, np.concatenate(images, axis=0))
+    key = cv2.waitKey(1)
+
+
+def save_rgb(k, rgb_image):
+  if isinstance(rgb_image, torch.Tensor):
+    rgb_image = rgb_image.cpu().numpy()
+
+  key = -1
+  while key == -1:
+    resized_image = cv2.resize(rgb_image, (0, 0,), fx=0.3, fy=0.3)
+    cv2.imwrite('/local/kla129/taichi_image/' + k + '.png', cv2.cvtColor(resized_image, cv2.COLOR_RGBA2GRAY))  # COLOR_RGB2BGR
+    # key = input('enter key to continue') 
+    key = 2
 
 @cache
 def test_rgb_to_bayer(rgb_image):
@@ -53,6 +89,7 @@ def test_rgb_to_bayer(rgb_image):
 
     display_rgb(k, converted_rgb)
 
+
 def test_bayer_to_rgb(rgb_image):
   bayer_images = make_bayer_images(rgb_image)
   for k, bayer_image in bayer_images.items():
@@ -63,7 +100,7 @@ def test_bayer_to_rgb(rgb_image):
     print(f"{k} PSNR: {psnr(rgb_image, converted_rgb):.2f}")
 
     display_rgb(k, converted_rgb)
-    
+        
 
 
 def main():

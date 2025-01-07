@@ -6,7 +6,7 @@ import numpy as np
 
 cache = lru_cache(maxsize=None)
 
-
+vec3 = ti.types.vector(5, ti.f32)
 vec5 = ti.types.vector(5, ti.f32)
 vec6 = ti.types.vector(6, ti.f32)
 vec7 = ti.types.vector(7, ti.f32)
