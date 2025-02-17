@@ -739,7 +739,8 @@ class ResultLogger:
     folder = Path(self.output_folder) if self.output_folder is not None else Path()
     output_folder = folder / self._folder_name
     output_folder.mkdir(parents=True, exist_ok=True)
-    with open(f'results-{str(self._save_count).zfill(5)}.json', 'r') as f:
+    file_name = f'results-{str(self._save_count).zfill(5)}.json'
+    with open(output_folder / file_name, 'w') as f:
       json.dump(self._buffer, f)
     self._save_count += 1
     self._buffer = []

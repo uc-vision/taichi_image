@@ -68,7 +68,7 @@ def setup_metrics_figure(run_tonemap = None) -> Callable:
   )
   
   def get_metric_data() -> dict:
-    return {name: metric.get_value() for name, metric in metrics.items()}
+    return {name: metric.get_value() for name, metric in metrics.items() if metric.get_value() is not None}
 
   reset_flag = False  # Flag to prevent multiple update calls at once when reset.
 
@@ -309,7 +309,6 @@ def setup_tonemap_histos() -> Callable:
     histos[-1][2].set_options([{'normalise': True, 'bins': 40, 'color': (.2, .2 + (i + 1) * inc, .2, 0.5)} for i in range(len(outputs))])
     histos[-1][3].set_options([{'normalise': True, 'bins': 40, 'color': (.2, .2, .2 + (i + 1) * inc, 0.5)} for i in range(len(outputs))])
     
-    # This section is slow.
     histos[-1][0].set_value(intensities)
     histos[-1][1].set_value(reds)
     histos[-1][2].set_value(greens)
@@ -345,12 +344,18 @@ def run_parameterisation(metrics: dict, parameterisation: dict, run_tonemap: Cal
 
 
   for i, permutation in enumerate(itertools.product(*steps)):
-    params = {p.uid: v for p, v in zip(active_metrics, permutation)}
-    results = run_tonemap({**metrics, **params})
-    results['visualise'] = parameterisation.get('visualise', False)
-    results['iteration'] = i
-    results['max_iteration'] = max_iteration
-    results['param_name'] = ", ".join([m.uid for m in active_metrics])
+    params = {
+      'metrics': metrics,
+      'visualise': parameterisation.get('visualise', False),
+      'iteration': i,
+      'max_iteration': max_iteration,
+      'param_name': ", ".join([m.uid for m in active_metrics])
+    }
+    # Update the metrics before passed to tonemap.
+    for m, v in zip(active_metrics, permutation):
+      params['metrics'][m.uid] = v
+    results = run_tonemap(params)
+
     yield results
 
 
@@ -378,7 +383,10 @@ def evaluate_tonemap() -> Callable:
     param['binned_outputs'] = bins
     
     if param_iteration is not None:
-      result_logger.log({'metrics': param['metrics'], 'tonemap_score': overlaps})
+      result_logger.log({'metrics': param['metrics'], 'tonemap_score': {k: float(v) for k, v in overlaps.items()}})
+    
+      if param_iteration == param['max_iteration']:
+        result_logger.save()
 
     return param
   
@@ -451,8 +459,10 @@ def setup_tonemap(image_paths: List[Path], depth_anything_v2_module: Optional[Pa
 
   # Create callback function.
   def run_tonemap(params: dict) -> dict:
+    metrics = params['metrics']
+
     if hasattr(isp.weight_func, 'threshold'):
-      isp.weight_func.threshold = params['depth_threshold']
+      isp.weight_func.threshold = metrics['depth_threshold']
     params['tonemap_results'] = {}
     for name, image in images.items():
       # Clone the original image so we don't override and get different results each iteration.
@@ -460,23 +470,23 @@ def setup_tonemap(image_paths: List[Path], depth_anything_v2_module: Optional[Pa
       if monodepth:
         isp.reset()
         # isp.metrics.bounds_min = params['bounds_min']
-        isp.metrics.bounds_max = params['bounds_max']
+        isp.metrics.bounds_max = metrics['bounds_max']
       else:
         isp.metrics = None
       
-      output = isp.tonemap_reinhard([tonemap_image], params['gamma'], params['intensity'], params['light_adapt'], params['colour_adapt'])[0]
+      output = isp.tonemap_reinhard([tonemap_image], metrics['gamma'], metrics['intensity'], metrics['light_adapt'], metrics['colour_adapt'])[0]
 
       if monodepth:
         weights = torch.rot90(resize_image(weight_model.weights[0, :, :], tonemap_image.shape[0:2]), k=3)
-        metrics = {'log_mean': isp.metrics.log_mean, 'rgb_mean': isp.metrics.rgb_mean, 
+        tonemap_metrics = {'log_mean': isp.metrics.log_mean, 'rgb_mean': isp.metrics.rgb_mean, 
                    'gray_mean': isp.metrics.gray_mean, 'map_key': isp.metrics.map_key}
       else:
         weights = None
-        metrics = {'log_mean': -1, 'rgb_mean': (-1, -1, -1), 'gray_mean': -1, 'map_key': -1}
+        tonemap_metrics = {'log_mean': -1, 'rgb_mean': (-1, -1, -1), 'gray_mean': -1, 'map_key': -1}
 
       params['tonemap_results'][name] = {
-        **metrics,
-        'threshold': params['depth_threshold'],
+        **tonemap_metrics,
+        'threshold': metrics['depth_threshold'],
         'output': output,
         'weights': weights,
         'image': tonemap_image
@@ -492,16 +502,14 @@ def tonemap_metrics_parser():
   parser = argparse.ArgumentParser()
 
   # parser.add_argument("--image", type=Path, default='/mnt/maara/raw/scan_10-32-17/cam1/00121.raw')
-  default_images = [
-    Path('/mnt/maara/raw/scan_10-32-17/cam1/00121.raw'), 
-    Path('/mnt/maara/raw/scan_10-52-18/cam1/00416.raw'), 
-    Path('/mnt/maara/raw/scan_14-05-05/cam1/00121.raw'),
-    Path('/mnt/maara/raw/exposures/scan_14-12-11/cam1/00090.raw'), 
-    Path('/mnt/maara/raw/exposures/scan_14-13-49/cam1/00090.raw'), 
-    Path('/mnt/maara/raw/exposures/scan_14-16-03/cam1/00090.raw')
+  inference = False
+  drive = '/mnt/maara' if inference else '/uc/research/CropVision'
+  scans = [
+    '/raw/scan_10-32-17/cam1/00121.raw', '/raw/scan_10-52-18/cam1/00416.raw', '/raw/scan_14-05-05/cam1/00121.raw',
+    '/raw/exposures/scan_14-12-11/cam1/00090.raw', '/raw/exposures/scan_14-13-49/cam1/00090.raw', '/raw/exposures/scan_14-16-03/cam1/00090.raw'
   ]
-  parser.add_argument("--image", action='extend', nargs='+', type=Path, default=default_images)
-  parser.add_argument("--dav2_module", type=Path, default='/home/kla101/Depth-Anything-V2')
+  parser.add_argument("--image", action='extend', nargs='+', type=Path, default=[Path(drive + scan) for scan in scans])
+  parser.add_argument("--dav2_module", type=Path, default='/local/kla129/Depth-Anything-V2')
   parser.add_argument("--parameterisation", action='store_true')
   parser.add_argument("--headless", action='store_true')
 
@@ -554,7 +562,7 @@ def main():
     if parameterisation is None:
       if metrics is None:
         return
-      return update_matplot(run_tonemap(metrics))
+      return update_matplot(run_tonemap({'metrics': metrics}))
     if parameterisation.get('state') == 'start':
       parameterisation_running = True
       for params in run_parameterisation(metrics, parameterisation, run_tonemap):
