@@ -6,11 +6,11 @@ from taichi_image.color import rgb_gray
 from taichi_image.types import ti_to_torch
 import torch
 import torch.nn.functional as F
+import math
 
-from taichi_image.util import Bounds, lerp, vec9, vec6, vec5
+from taichi_image.util import lerp, vec9, vec6, vec5
 
-from . import tonemap, interpolate, bayer, packed
-from .camera_isp import moving_average
+from . import interpolate, bayer, packed
 
 
 from monodepth_utilities.algorithms import Predictor
@@ -74,7 +74,8 @@ def camera_isp(name:str, dtype=ti.f32):
 
         self.log_mean += (log_gray * weight)
         self.mean += (gray * weight)
-        self.rgb_mean += rgb
+        # self.rgb_mean += rgb
+        self.rgb_mean += rgb * weight
         self.total_weight += weight
         self.total_count += 1.0
 
@@ -83,15 +84,16 @@ def camera_isp(name:str, dtype=ti.f32):
         self.log_mean /= self.total_weight
         self.mean /= self.total_weight
         # rgb values not affacted by the weight.
-        self.rgb_mean /= self.total_count
+        self.rgb_mean /= self.total_weight
 
 
     def __init__(self, device):
       """ Initialise the metrics class. """
       self._values = torch.zeros(5, device=device, dtype=torch.float32)
+      # Preset weights array because taichi does not like Optional parameters.
       self._weights = torch.zeros((1, 1, 1), device=device, dtype=torch.float)
-      self.log_bounds_max = 1.0
-      self.log_bounds_min = -9.210340371976182  # math.log(1e-4)
+      self.bounds_max = 1.0
+      self.bounds_min = 1e-4  # -9.210340371976182  # math.log(1e-4)
 
     @property
     def values(self):
@@ -115,12 +117,12 @@ def camera_isp(name:str, dtype=ti.f32):
     @property
     def map_key(self):
       """ Return the map key based on current metrics. """
-      key = (self.log_bounds_max - self.log_mean) / (self.log_bounds_max - self.log_bounds_min)
+      key = (math.log(self.bounds_max) - self.log_mean) / (math.log(self.bounds_max) - math.log(self.bounds_min))
       return 0.3 + (0.7 * (key ** 1.4))
     
     def reset(self) -> None:
       """ Reset metrics. """
-      #self._data[None] = vec5(0, 0, 0, 0, 0)
+      self._values = torch.zeros_like(self._values)
     
     def update(self, inputs: torch.Tensor, alpha: float, weights: Optional[torch.Tensor] = None):
       """ Update the moving metering. """
@@ -145,6 +147,8 @@ def camera_isp(name:str, dtype=ti.f32):
       for i in ti.grouped(ti.ndrange(*inputs.shape[:3])):
         stats.accum(inputs[i], weights[i] if weights_flag == 1 else 1.0)
       stats.normalise()
+      metering[None] = stats.to_vec()
+
       v = lerp(alpha, stats.to_vec(), metering[None])
       metering[None] = v
 
@@ -177,7 +181,7 @@ def camera_isp(name:str, dtype=ti.f32):
       results = torch.concat(
         [predictor.predict(split_input) for split_input in inputs.split(batch_size)]
       )
-    normalised_depth = (results - results.min()) / (results.max() - results.min())
+    normalised_depth = ((results - results.min()) / (results.max() - results.min()))  # Inverse 
     if len(normalised_depth.shape) == 4:
       if normalised_depth.shape[1] == 1:
         # N C H W -> N H W
@@ -203,7 +207,7 @@ def camera_isp(name:str, dtype=ti.f32):
     """
     max_out = 1e-6
     mean = lerp(color_adapt, gray_mean, rgb_mean)
-
+    
     ti.loop_config(block_dim=128)
     for i in ti.grouped(ti.ndrange(image.shape[0], image.shape[1])):
       rgb = image[i]
@@ -225,16 +229,6 @@ def camera_isp(name:str, dtype=ti.f32):
     for i in ti.grouped(ti.ndrange(image.shape[0], image.shape[1])):
       p = tm.pow(image[i] / max_out, 1.0 / gamma)
       output[i] = ti.cast(255 * p, ti.u8)
-
-  @ti.kernel
-  def linear_kernel(image: ti.types.ndarray(dtype=vec_dtype, ndim=2), 
-          output : ti.types.ndarray(dtype=ti.types.vector(3, ti.u8), ndim=2),
-          metering : ti.types.ndarray(dtype=ti.f32, ndim=1),
-                    gamma: ti.template()):
-    
-    # stats = metering_from_vec(metering)
-    stats = None
-    tonemap.linear_func(image, output, stats.bounds, gamma, 255, ti.u8)
     
 
   class ISP():
@@ -252,6 +246,7 @@ def camera_isp(name:str, dtype=ti.f32):
                  stride: int = 0,  # If stride is > 0 initial metering will use this.
                  debug: bool = False,   # debug flag.
                  predictor: Optional[Predictor] = None,  # Monodepth predictor to use
+                 weight_func = None,  # Callable function to modify weight map.
                  ):
       
       assert scale is None or resize_width == 0, "Cannot specify both scale and resize_width"    
@@ -265,41 +260,27 @@ def camera_isp(name:str, dtype=ti.f32):
       self.idx = idx
       self.stride = stride
       self.batch_size = batch_size
+      self.weight_func = weight_func
 
       self.device = device
       self.metrics = Metrics(self.device)
-      self.initalised = False
+      self.initialised = False
 
       self.predictor = predictor
       if self.predictor is None:
         raise RuntimeError('Unable to run depth camera without valid predictor.')
 
       self.debug = debug
-      self.masks = []
-      self.visuals = []
+      self.masks = None
 
     def has_masks(self) -> bool:
-      return len(self.masks) > 0
-    
-    def has_visuals(self) -> bool:
-      return len(self.visuals) > 0
-    
-    def get_transformed_masks(self) -> list[torch.Tensor]:
-      if not self.has_masks():
-        return []
-      return [interpolate.transform(mask, self.transform) for mask in self.masks]
-    
-    def get_transformed_visuals(self) -> list[torch.Tensor]:
-      if not self.has_visuals():
-        return []
-      return [interpolate.transform(visual, self.transform) for visual in self.visuals]
+      return self.masks is not None
 
     def reset(self) -> None:
       """ Reset the initialisation which will reset the metrics. """
       self.metrics.reset()
-      self.masks = []
-      self.visuals = []
-      self.initalised = False
+      self.masks = None
+      self.initialised = False
 
     @beartype
     def set(self, moving_alpha:Optional[float]=None, resize_width:Optional[int]=None, 
@@ -318,7 +299,6 @@ def camera_isp(name:str, dtype=ti.f32):
 
       if transform is not None:
         self.transform = transform
-      
 
     def resize_image(self, image):
       w, h = image.shape[1], image.shape[0]
@@ -334,7 +314,6 @@ def camera_isp(name:str, dtype=ti.f32):
       
       else:
         return image
-
 
     def load_16u(self, image):
       cfa = torch.empty(image.shape, dtype=torch_dtype, device=self.device)
@@ -361,16 +340,6 @@ def camera_isp(name:str, dtype=ti.f32):
       cfa = torch.empty(h, w, dtype=torch_dtype, device=self.device)    
       decode16_kernel(image_data.view(-1), cfa.view(-1))
       return self._process_image(cfa)
-
-    def updated_bounds(self, bounds:List[Bounds]):
-      bounds = tonemap.union_bounds(bounds)
-      self.moving_bounds = moving_average(self.moving_bounds, tonemap.bounds_to_np(bounds), self.moving_alpha)
-      return self.moving_bounds
-    
-    def updated_metrics(self, image_metrics:List[vec9]):    
-      mean_metrics = sum(image_metrics) / len(image_metrics)
-      self.moving_metrics = moving_average(self.moving_metrics, mean_metrics, self.moving_alpha)
-      return self.moving_metrics
         
     def _process_image(self, cfa):
       rgb = bayer.bayer_to_rgb(cfa)
@@ -380,16 +349,19 @@ def camera_isp(name:str, dtype=ti.f32):
       """ Update metrics based on image stride. """
       images = torch.stack([image[::self.stride, ::self.stride, :] for image in images], 0)
       self.metrics.update(images, alpha)
-      # metering_kernel_weights(images, metering, alpha, self._weights))
 
     def update_metrics_depth(self, images: List[torch.Tensor], alpha: float, idx: DepthIndex) -> None:
       """ Update the metrics based on depth model. """
-      #  def metering_images_depth(images, t, prev, size = 518, idx: DepthIndex = None, batch_size: BatchSize = None):
       inputs = initialise_inputs(images, self.size, idx)
       inputs, weights = inputs_to_depth(inputs, self.batch_size, self.predictor)
+      if self.weight_func is not None:
+        weights = self.weight_func(weights)
       self.metrics.update(inputs, alpha, weights)
+
+    def apply_transform(self, images: List[torch.Tensor]) -> List[torch.Tensor]:
+      """ Applies internal transform to image. """
+      return [interpolate.transform(image, self.transform) for image in images]
       
-    #@time_cuda_func
     def update_metering(self, images:List[torch.Tensor], initial: bool = False):
       """ 
         Update the metrics from the provided images.
@@ -398,19 +370,19 @@ def camera_isp(name:str, dtype=ti.f32):
         Otherwise the metrics are computed using a depth model.
       """
       if initial:
-        if self.initalised:
+        if self.initialised:
           return
         if self.stride > 0:
           self.update_metrics_stride(images, 0.0)
         else:
           self.update_metrics_depth(images, 0.0, len(images) // 2)  # Use center image index for initial
-        self.initalised = True
+        self.initialised = True
       else:
         self.update_metrics_depth(images, 1.0 - self.moving_alpha, self.idx)
 
     @beartype
     def tonemap_reinhard(self, images:List[torch.Tensor], 
-                         gamma:float=1.0, intensity:float=1.0, light_adapt:float=1.0, color_adapt:float=0.0):
+                         gamma:float=1.0, intensity:float=1.0, light_adapt:float=1.0, color_adapt:float=0.0, transform: bool = True):
       self.update_metering(images, True)  # Initial metering when warming up.
       outputs = [torch.empty(image.shape, dtype=torch.uint8, device=self.device) for image in images]
 
@@ -418,18 +390,9 @@ def camera_isp(name:str, dtype=ti.f32):
         reinhard_kernel(image, output, self.metrics.map_key, self.metrics.gray_mean, self.metrics.rgb_mean, gamma, intensity, light_adapt, color_adapt)
 
       self.update_metering(outputs)  # Metering based on tonemap results.
-      return [interpolate.transform(output, self.transform) for output in outputs]
-
-    @beartype
-    def tonemap_linear(self, images:List[torch.Tensor],  gamma:float=1.0):
-      # self.update_metering(images)
-      self.update_metering(images, True)
-      outputs = [torch.empty(image.shape, dtype=torch.uint8, device=self.device) for image in images]
-      for output, image in zip(outputs, images):
-        linear_kernel(image, output, self.metrics, gamma)
-      self.update_metering(outputs)
-      
-      return [interpolate.transform(output, self.transform) for output in outputs]
+      if transform:
+        return self.apply_transform(outputs)
+      return outputs
 
 
   ISP.__qualname__ = name

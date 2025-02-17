@@ -46,23 +46,31 @@ def display_rgb(k, rgb_image):
     key = cv2.waitKey(1)
 
 
-def display_multi_rgb(window_name: str, rgbs: List[Tuple[np.ndarray, str]]):
+def display_multi_rgb(window_name: str, rgbs: List[Tuple[np.ndarray, str]], continuous: bool = False):
   """ 
     Displays multiple rgb images provided in a list of 
     tuple where the first item is the image and second a caption of parameters for the image.
+    continuous - Bool flag whether to wait for key before returning result.
   """
   cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+  cv2.resizeWindow(window_name, 2304, 1296) 
+  images = []
+  for image, text in rgbs:
+    img = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+    cv2.putText(img, text, (40, 200), cv2.FONT_HERSHEY_SIMPLEX, 6, (50, 50, 255), 16, 4)
+    images.append(img)
+  window_image = np.concatenate(images, axis=0)
+  
+  if continuous:
+    cv2.imshow(window_name, window_image)
+    key = cv2.waitKey(10)
+  else:
+    key = -1
+    while key == -1:
+      cv2.imshow(window_name, np.concatenate(images, axis=0))
+      key = cv2.waitKey(10)
+  return key == 13  # Returns if enter was pressed.
 
-  key = -1
-  while key == -1:
-    # Merge images
-    images = []
-    for image, text in rgbs:
-      img = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-      cv2.putText(img, text, (40, 200), cv2.FONT_HERSHEY_SIMPLEX, 8, 255, 10, 2)
-      images.append(img)
-    cv2.imshow(window_name, np.concatenate(images, axis=0))
-    key = cv2.waitKey(1)
 
 
 def save_rgb(k, rgb_image):
