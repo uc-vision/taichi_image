@@ -54,7 +54,6 @@ def find_scan_folders(scan_folder:Path)  -> Tuple[List[Path], List[str]]:
   return find_scan_images(folder)
 
 
-
 @beartype
 def load_raw_bytes(filepath, device:torch.device=torch.device('cuda')):
   """Load raw image bytes into torch tensor without any decoding"""
@@ -62,7 +61,7 @@ def load_raw_bytes(filepath, device:torch.device=torch.device('cuda')):
     raw_bytes = f.read()
   return torch.frombuffer(raw_bytes, dtype=torch.uint8).to(device, non_blocking=True)
 
-def load_images_iter(f : Callable[[Path], torch.Tensor], folders:list[str], names:List[str],  device:torch.device=torch.device('cuda')):
+def load_images_iter(f : Callable[[Path], torch.Tensor], folders:list[str], names:List[str]):
   """ Load a set of folders containing raw images with matching names 
        Returns an iterator of image tuples {camera_id: raw_bytes_tensor}
   """  
@@ -91,6 +90,7 @@ def main():
   parser = argparse.ArgumentParser()
   parser.add_argument("--scan", type=Path)
   parser.add_argument("--images", type=Path)
+  parser.add_argument("--reverse", action="store_true")
 
   parser.add_argument("--width", type=int, default=4096)
 
@@ -100,7 +100,6 @@ def main():
   parser.add_argument("--color_adapt", type=float, default=0.2)
   parser.add_argument("--light_adapt", type=float, default=1.0)
   parser.add_argument("--moving_alpha", type=float, default=0.02)
-
   parser.add_argument("--resize_width", type=int, default=3072)
   parser.add_argument("--transform", type=ImageTransform, default=ImageTransform.rotate_90)
   add_taichi_args(parser)
@@ -121,6 +120,9 @@ def main():
     folders, names = find_folder_images(args.images)
   else:
     raise ValueError("No --scan or --images specified")
+  
+  if args.reverse:
+    names = list(reversed(names))                    
 
   images = load_images_iter(partial(load_raw_bytes, device=torch.device(args.device)), folders, names)
 
@@ -128,6 +130,8 @@ def main():
     assert bytes.shape[0] % 2 == 0, "bytes must have an even number"
     bytes = bytes.view(-1, (args.width * 3)//2)
     return isp.load_packed12(bytes, ids_format=args.ids_format)
+
+
 
 
   pbar = tqdm(images, total=len(names))
@@ -139,7 +143,7 @@ def main():
                             intensity=args.intensity, 
                             color_adapt=args.color_adapt, 
                             light_adapt=args.light_adapt)
-
+               
     display_rgb("tonemapped", torch.concat(outputs, dim=1))
 
 

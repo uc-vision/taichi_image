@@ -1,12 +1,10 @@
-import sys
-from typing import List, Optional, Tuple
+from typing import List, Optional
 from beartype import beartype
 import taichi as ti
 import taichi.math as tm
 from taichi_image.color import rgb_gray
-from taichi_image.types import empty_like, ti_to_torch
+from taichi_image.types import ti_to_torch
 import torch
-import torch.nn.functional as F
 
 from taichi_image.util import Bounds, lerp, vec9
 
@@ -36,9 +34,12 @@ def metering_torch(image, bounds):
     log_grey.min().view(1), log_grey.max().view(1),
                 log_grey.mean().view(1), grey_mean.view(1), image.mean(dim=(0, 1))], dim=0)
 
+def strided_image(image, stride = 8):
+  return image[::stride, ::stride, :]
+
 @torch.compile
 def metering_images_torch(images, t, prev, stride=8):
-    images = torch.concatenate([image[::stride, ::stride, :] for image in images], 0)
+    images = torch.concatenate([strided_image(image, stride) for image in images], 0)
     bounds = image_bounds(images)
 
     new_bounds = t * prev[:2] + (1.0 - t) * bounds
@@ -78,11 +79,17 @@ def camera_isp(name:str, dtype=ti.f32):
 
 
   @ti.kernel
-  def load_u16(image: ti.types.ndarray(ti.u16, ndim=2),
+  def load_16u(image: ti.types.ndarray(ti.u16, ndim=2),
                out:   ti.types.ndarray(dtype, ndim=2)):
     for i in ti.grouped(image):
       x = ti.cast(image[i], ti.f32) / 65535.0
       out[i] = ti.cast(x, dtype) 
+
+  @ti.kernel
+  def load_32f(image: ti.types.ndarray(ti.f32, ndim=2),
+               out:   ti.types.ndarray(dtype, ndim=2)):
+    for i in ti.grouped(image):
+      out[i] = ti.cast(image[i], dtype) 
 
   @ti.kernel
   def load_16f(image: ti.types.ndarray(ti.u16, ndim=2),
@@ -148,8 +155,7 @@ def camera_isp(name:str, dtype=ti.f32):
     b = lerp(alpha, bounds.to_vec(), tm.vec2(prev_stats.bounds.min, prev_stats.bounds.max))
     bounds = Bounds(b[0], b[1])
 
-    stats = Metering(bounds, Bounds(np.inf, -np.inf), 0, 0, tm.vec3(0, 0, 0))   
-
+    stats = Metering(bounds, Bounds(np.inf, -np.inf), 0, 0, tm.vec3(0, 0, 0))  
     # ti.loop_config(block_dim=128)
     for i in ti.grouped(ti.ndrange(*images.shape[:3])):
       stats.accum(images[i])
@@ -278,12 +284,17 @@ def camera_isp(name:str, dtype=ti.f32):
 
     def load_16u(self, image):
       cfa = torch.empty(image.shape, dtype=torch_dtype, device=self.device)
-      load_u16(image, cfa)
+      load_16u(image, cfa)
       return self._process_image(cfa)
 
     def load_16f(self, image):
       cfa = torch.empty(image.shape, dtype=torch_dtype, device=self.device)
       load_16f(image, cfa)
+      return self._process_image(cfa)
+    
+    def load_32f(self, image):
+      cfa = torch.empty(image.shape, dtype=torch_dtype, device=self.device)
+      load_32f(image, cfa)
       return self._process_image(cfa)
 
     def load_packed12(self, image_data, ids_format=False):
@@ -328,6 +339,12 @@ def camera_isp(name:str, dtype=ti.f32):
         self.metrics = metering_images(images, (1.0 - self.moving_alpha), 
             self.metrics, self.metering_stride)
 
+    def tonemap_only(self, image, metrics, gamma, intensity, light_adapt, color_adapt):
+      output = torch.empty(image.shape, dtype=torch.uint8, device=self.device)
+      reinhard_kernel(image, output, metrics, gamma, intensity, light_adapt, color_adapt)
+      return interpolate.transform(output, self.transform)
+
+
 
     @beartype
     def tonemap_reinhard(self, images:List[torch.Tensor], 
@@ -350,7 +367,8 @@ def camera_isp(name:str, dtype=ti.f32):
       
       return [interpolate.transform(output, self.transform) for output in outputs]
 
-
+  ISP.reinhard_kernel = staticmethod(reinhard_kernel)
+  ISP.linear_kernel = staticmethod(linear_kernel)
   ISP.__qualname__ = name
   return ISP
 
