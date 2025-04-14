@@ -225,10 +225,12 @@ def camera_isp(name:str, dtype=ti.f32):
     stats = metering_from_vec(metering)
     tonemap.linear_func(image, output, stats.bounds, gamma, 255, ti.u8)
 
+
+
   class ISP():
     @beartype
     def __init__(self, bayer_pattern:bayer.BayerPattern, 
-                  scale:Optional[float]=None, resize_width:int=0,
+                 scale:Optional[float]=None, resize_width:int=0,
                  moving_alpha=0.1, 
                  transform:interpolate.ImageTransform=interpolate.ImageTransform.none,
                  device:torch.device = torch.device('cuda', 0),
