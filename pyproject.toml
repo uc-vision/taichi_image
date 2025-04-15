@@ -1,6 +1,6 @@
 [project]
 name = "taichi_image"  
-version = "0.3.1"  
+version = "0.3.2"  
 description = "A taichi-based camera ISP pipeline"  
 readme = "README.md" 
 requires-python = ">=3.10"
@@ -13,7 +13,8 @@ maintainers = [
 dependencies = [
   "beartype", 
   "tqdm",
-  "colour-demosaicing"
+  "colour-demosaicing",
+  "natsort"
 ]
 
 
@@ -32,8 +33,6 @@ build-backend = "hatchling.build"
 
 [project.scripts]  # Optional
 tonemap_scan = "taichi_image.scripts.tonemap_scan:main"
-
-
 
 
 [tool.pyright]
