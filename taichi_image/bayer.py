@@ -1,11 +1,11 @@
 import enum
+from typing import Optional
 import taichi as ti
-from taichi.math import ivec2, vec3
-import torch
+from taichi.math import ivec2, vec3, vec4, mat3
 
 import numpy as np
 
-from taichi_image.kernel import flatten, symmetrical, zip_tuple, u8vec3
+from taichi_image.kernel import symmetrical, zip_tuple
 from taichi_image.util import cache
 
 from . import types
@@ -54,6 +54,20 @@ def make_bayer_kernels():
 
   return tuple([diamond_kernel(w) for w in vec_weights])
 
+def scale_kernel(kernel, scale:tuple[float, float, float]):
+    """Scale the weights of a kernel by a factor while preserving offsets.
+    
+    Args:
+        kernel: Tuple of ((offset_x, offset_y), (weight_r, weight_g, weight_b))
+        scale: Factor to multiply the weights by
+    """
+
+    return tuple(
+        (offset, tuple(w * s for w, s in zip(weight, scale)))
+        for offset, weight in kernel
+    )
+
+  
 
 bayer_kernels = make_bayer_kernels()
 
@@ -98,7 +112,9 @@ def rgb_to_bayer_kernel(image: ti.types.ndarray(ndim=3),
     bayer[y + 1, x + 1] = image[y + 1, x + 1, p4]
 
 @cache    
-def bayer_to_rgb_func(pattern:BayerPattern, in_dtype=ti.u8, out_dtype=None):
+def bayer_to_rgb_func(pattern:BayerPattern,
+                      correct_colors:Optional[tuple[float,...]]=None,
+                      in_dtype=ti.u8, out_dtype=None):
   if out_dtype is None:
     out_dtype = in_dtype
 
@@ -106,6 +122,12 @@ def bayer_to_rgb_func(pattern:BayerPattern, in_dtype=ti.u8, out_dtype=None):
   out_scale = types.scale_factor[out_dtype]
   
   kernels =  tuple([bayer_kernels[i] for i in kernel_patterns[pattern] ])
+
+
+  if correct_colors is not None:
+    correct_colors = mat3(correct_colors)
+
+  has_color_correction = correct_colors is not None
 
   @ti.func
   def write_pixel(image: ti.template(), i: ivec2, v: vec3):
@@ -126,7 +148,11 @@ def bayer_to_rgb_func(pattern:BayerPattern, in_dtype=ti.u8, out_dtype=None):
         c += ti.cast(image[idx], ti.f32) * vec3(weight)
         t += vec3(weight)
 
-    return ti.math.clamp(c / (in_scale * t), 0, 1.0)
+    c = c / (in_scale * t) 
+    if  ti.static(has_color_correction):
+      c = correct_colors @  c
+
+    return ti.math.clamp(c, 0, 1.0)
 
 
   @ti.func
@@ -151,8 +177,10 @@ def bayer_to_rgb_func(pattern:BayerPattern, in_dtype=ti.u8, out_dtype=None):
   return f
 
 @cache    
-def bayer_to_rgb_kernel(pattern:BayerPattern, in_dtype=ti.u8, out_dtype=None):
-  func = bayer_to_rgb_func(pattern, in_dtype, out_dtype)
+def bayer_to_rgb_kernel(pattern:BayerPattern, 
+                        correct_colors:Optional[np.ndarray]=None,
+                        in_dtype=ti.u8, out_dtype=None):
+  func = bayer_to_rgb_func(pattern, correct_colors, in_dtype, out_dtype)
 
   @ti.kernel
   def f(bayer: ti.types.ndarray(dtype=in_dtype, ndim=2),
@@ -171,12 +199,21 @@ def rgb_to_bayer(image, pattern:BayerPattern=BayerPattern.RGGB):
 
 
   
-def bayer_to_rgb(bayer, pattern:BayerPattern=BayerPattern.RGGB, dtype=None):
+def bayer_to_rgb(bayer, pattern:BayerPattern=BayerPattern.RGGB, 
+                 correct_colors:Optional[np.ndarray]=None,
+                 dtype=None):
   assert bayer.ndim == 2 , "image must be mono bayer"
   assert bayer.shape[0] % 2 == 0 and bayer.shape[1] % 2 == 0, "image must be even size"
   
   rgb = types.empty_like(bayer, shape=bayer.shape + (3,), dtype=dtype)
-  f = bayer_to_rgb_kernel(pattern, types.ti_type(bayer), types.ti_type(rgb))
+
+  if correct_colors is not None:
+    correct_colors = tuple(correct_colors.flatten().tolist())
+  f = bayer_to_rgb_kernel(pattern,
+                          correct_colors=correct_colors,
+              
+                          in_dtype=types.ti_type(bayer), 
+                          out_dtype=types.ti_type(rgb))
 
   f(bayer, rgb)
   return rgb

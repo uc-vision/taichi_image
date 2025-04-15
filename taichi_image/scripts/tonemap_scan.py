@@ -1,10 +1,12 @@
 import argparse
+from calendar import c
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from pathlib import Path
 from typing import Callable, List, Tuple
 from beartype import beartype
 from natsort import natsorted
+import numpy as np
 import torch
 from tqdm import tqdm
 from taichi_image.interpolate import ImageTransform
@@ -95,24 +97,28 @@ def main():
   parser.add_argument("--width", type=int, default=4096)
 
   # tonemap parameters
-  parser.add_argument("--gamma", type=float, default=0.5)
-  parser.add_argument("--intensity", type=float, default=2.0)
-  parser.add_argument("--color_adapt", type=float, default=0.2)
-  parser.add_argument("--light_adapt", type=float, default=1.0)
+  parser.add_argument("--gamma", type=float, default=0.9)
+  parser.add_argument("--intensity", type=float, default=3.0)
+  parser.add_argument("--color_adapt", type=float, default=0.0)
+  parser.add_argument("--light_adapt", type=float, default=0.9)
   parser.add_argument("--moving_alpha", type=float, default=0.02)
-  parser.add_argument("--resize_width", type=int, default=3072)
+  parser.add_argument("--resize_width", type=int, default=0)
   parser.add_argument("--transform", type=ImageTransform, default=ImageTransform.rotate_90)
+  parser.add_argument("--correct_colors", action="store_true")
+
   add_taichi_args(parser)
 
   args = parser.parse_args()
 
   ti.init(debug=args.debug, 
     arch=ti.cuda if args.device == "cuda" else ti.cpu,  log_level=args.log)
+  
 
   isp = camera_isp.Camera32(bayer.BayerPattern.RGGB, 
                             transform=args.transform,
                             moving_alpha=args.moving_alpha, 
-                            resize_width=args.resize_width)
+                            resize_width=args.resize_width,
+                            correct_colors=args.correct_colors)
 
   if args.scan is not None:
     folders, names = find_scan_folders(args.scan)

@@ -1,3 +1,4 @@
+from turtle import color
 from typing import List, Optional
 from beartype import beartype
 import taichi as ti
@@ -226,12 +227,25 @@ def camera_isp(name:str, dtype=ti.f32):
     tonemap.linear_func(image, output, stats.bounds, gamma, 255, ti.u8)
 
 
+  default_cc = np.array([
+        [1.75, -0.25, -0.30],
+        [-0.10,  1.40, -0.30],
+        [-0.05, -0.55,  2.10]
+  ])
+
 
   class ISP():
     @beartype
     def __init__(self, bayer_pattern:bayer.BayerPattern, 
-                 scale:Optional[float]=None, resize_width:int=0,
+                 scale:Optional[float]=None, 
+                 resize_width:int=0,
                  moving_alpha=0.1, 
+
+                 correct_colors:bool = False,
+                 white_balance:np.ndarray = np.array([1.8, 1.0, 2.1]),
+                 color_correction:np.ndarray = default_cc,
+
+
                  transform:interpolate.ImageTransform=interpolate.ImageTransform.none,
                  device:torch.device = torch.device('cuda', 0),
                  metering_stride:int=8):
@@ -245,12 +259,22 @@ def camera_isp(name:str, dtype=ti.f32):
       self.transform = transform
       self.metering_stride = metering_stride
 
+      self.correct_colors = correct_colors
+      self.white_balance = white_balance
+      self.color_correction = color_correction
+
+
       self.metrics = None
       self.device = device
 
     @beartype
     def set(self, moving_alpha:Optional[float]=None, resize_width:Optional[int]=None, 
               scale:Optional[float]=None, 
+
+              correct_colors:Optional[bool]=None,
+              white_balance:Optional[np.ndarray]=None,
+              color_correction:Optional[np.ndarray]=None,
+
               transform:Optional[interpolate.ImageTransform]=None):
       if moving_alpha is not None:
         self.moving_alpha = moving_alpha
@@ -265,8 +289,15 @@ def camera_isp(name:str, dtype=ti.f32):
 
       if transform is not None:
         self.transform = transform
-        
 
+      if correct_colors is not None:
+        self.correct_colors = correct_colors
+
+      if white_balance is not None:
+        self.white_balance = white_balance
+
+      if color_correction is not None:
+        self.color_correction = color_correction
 
     def resize_image(self, image):
       w, h = image.shape[1], image.shape[0]
@@ -325,8 +356,20 @@ def camera_isp(name:str, dtype=ti.f32):
       self.moving_metrics = moving_average(self.moving_metrics, mean_metrics, self.moving_alpha)
       return self.moving_metrics
         
+
+    @property
+    def color_correct_matrix(self) -> Optional[np.ndarray]:
+      
+      if self.correct_colors:
+        cc = self.color_correction.copy()
+        cc[:, :3] *= self.white_balance 
+
+        return cc
+      else:
+        return None
+
     def _process_image(self, cfa):
-      rgb = bayer.bayer_to_rgb(cfa)
+      rgb = bayer.bayer_to_rgb(cfa, correct_colors=self.color_correct_matrix)
       return self.resize_image(rgb) 
       
       
