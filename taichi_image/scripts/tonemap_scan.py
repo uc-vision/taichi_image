@@ -15,6 +15,7 @@ from taichi_image.test.arguments import add_taichi_args
 
 from taichi_image import bayer, camera_isp
 import taichi as ti
+import cv2
 
 def is_image_file(f:Path):
   return f.is_file() and f.suffix in ['.tiff', '.raw']
@@ -43,6 +44,9 @@ def find_scan_images(scan_folder:Path) -> Tuple[List[Path], List[str]]:
 
   if len(common_images) == 0:
     raise ValueError(f"No common images found in {cam_ids}")
+  
+  cam_ids = natsorted(cam_ids)
+
 
   print(f"Found {cam_ids} image folders with {len(common_images)} images")
   return [scan_folder / id for id in cam_ids], sorted(common_images)
@@ -83,6 +87,17 @@ def load_images_iter(f : Callable[[Path], torch.Tensor], folders:list[str], name
         yield names[i - 1], result
 
 
+def concat_image_grid(images: list, rows: int) -> torch.Tensor:
+    n_images = len(images)
+    n_cols = (n_images + rows - 1) // rows  # ceiling division
+    
+    # concat each row horizontally, then rows vertically
+    grid_rows = []
+    for i in range(0, n_images, n_cols):
+        row = images[i:i+n_cols]
+        grid_rows.append(torch.concat(row, dim=1))
+    
+    return torch.concat(grid_rows, dim=0)
 
 
 
@@ -105,6 +120,8 @@ def main():
   parser.add_argument("--resize_width", type=int, default=0)
   parser.add_argument("--transform", type=ImageTransform, default=ImageTransform.rotate_90)
   parser.add_argument("--correct_colors", action="store_true")
+  parser.add_argument("--write", type=Path, default=None)
+  parser.add_argument("--rows", default=2)
 
   add_taichi_args(parser)
 
@@ -128,7 +145,8 @@ def main():
     raise ValueError("No --scan or --images specified")
   
   if args.reverse:
-    names = list(reversed(names))                    
+    names = list(reversed(names))       
+
 
   images = load_images_iter(partial(load_raw_bytes, device=torch.device(args.device)), folders, names)
 
@@ -136,8 +154,6 @@ def main():
     assert bytes.shape[0] % 2 == 0, "bytes must have an even number"
     bytes = bytes.view(-1, (args.width * 3)//2)
     return isp.load_packed12(bytes, ids_format=args.ids_format)
-
-
 
 
   pbar = tqdm(images, total=len(names))
@@ -149,8 +165,19 @@ def main():
                             intensity=args.intensity, 
                             color_adapt=args.color_adapt, 
                             light_adapt=args.light_adapt)
-               
-    display_rgb("tonemapped", torch.concat(outputs, dim=1))
+    
+
+    # concat as a grid of rows
+    image = concat_image_grid(outputs, rows=args.rows).cpu().numpy()             
+
+    if args.write is not None:
+      args.write.mkdir(exist_ok=True, parents=True)
+      filename = args.write / f"{Path(name).stem}.jpg"
+      print(f"Writing {filename}")
+      cv2.imwrite(str(filename), image, [int(cv2.IMWRITE_JPEG_QUALITY), 96])
+
+    display_rgb("tonemapped", image)
+
 
 
 
